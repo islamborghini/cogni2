@@ -1,0 +1,14 @@
+# Build artifacts
+/cogni
+/cogni2
+*.test
+*.out
+
+# Local benchmark outputs (committed results live in bench/results/)
+/bench/runs/
+/tmp/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
