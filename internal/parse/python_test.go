@@ -98,6 +98,22 @@ func TestParsePython_Edge(t *testing.T) {
 	}
 }
 
+func TestPythonTree(t *testing.T) {
+	tree, err := PythonTree(loadFixture(t, "simple.py"))
+	if err != nil {
+		t.Fatalf("PythonTree: %v", err)
+	}
+	defer tree.Close()
+
+	root := tree.RootNode()
+	if got := root.Kind(); got != "module" {
+		t.Errorf("root kind = %q, want \"module\"", got)
+	}
+	if root.NamedChildCount() == 0 {
+		t.Error("expected the module to have named children")
+	}
+}
+
 func TestParsePythonTopLevel_Empty(t *testing.T) {
 	got, err := ParsePythonTopLevel([]byte("# just a comment\n"))
 	if err != nil {

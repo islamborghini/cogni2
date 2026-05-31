@@ -17,13 +17,14 @@ const docstringMaxLen = 500
 // concurrent reuse, unlike Parser instances.
 var pythonLang = ts.NewLanguage(tspython.Language())
 
-// ParsePython returns every named definition (function, class, method) in src.
-// Qualified names are dotted paths within the file: a top-level function gets
-// Qualified == Name; a method on Greeter gets Qualified == "Greeter.greet".
+// PythonTree parses src and returns the tree-sitter syntax tree. The caller
+// owns the tree and must Close() it when done.
 //
-// ParsePythonTopLevel is preserved for callers that only want module-level
-// items; it is now a thin filter over ParsePython.
-func ParsePython(src []byte) ([]Symbol, error) {
+// Exposed so structural consumers that need node-level access — line spans,
+// byte ranges, child fields — can walk the AST directly instead of the
+// flattened Symbol list. The cAST chunker in internal/chunk is the first such
+// consumer; ParsePython is itself built on top of this.
+func PythonTree(src []byte) (*ts.Tree, error) {
 	parser := ts.NewParser()
 	defer parser.Close()
 	if err := parser.SetLanguage(pythonLang); err != nil {
@@ -32,6 +33,20 @@ func ParsePython(src []byte) ([]Symbol, error) {
 	tree := parser.Parse(src, nil)
 	if tree == nil {
 		return nil, errors.New("parse: tree-sitter returned nil tree")
+	}
+	return tree, nil
+}
+
+// ParsePython returns every named definition (function, class, method) in src.
+// Qualified names are dotted paths within the file: a top-level function gets
+// Qualified == Name; a method on Greeter gets Qualified == "Greeter.greet".
+//
+// ParsePythonTopLevel is preserved for callers that only want module-level
+// items; it is now a thin filter over ParsePython.
+func ParsePython(src []byte) ([]Symbol, error) {
+	tree, err := PythonTree(src)
+	if err != nil {
+		return nil, err
 	}
 	defer tree.Close()
 
