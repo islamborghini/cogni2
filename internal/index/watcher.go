@@ -62,7 +62,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer fsw.Close()
+	defer func() { _ = fsw.Close() }()
 
 	if err := w.addRecursive(fsw, w.root); err != nil {
 		return err
