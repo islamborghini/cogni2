@@ -83,6 +83,28 @@ func TestValidate_AcceptsGoodSet(t *testing.T) {
 	}
 }
 
+func TestLoad_FrozenSet(t *testing.T) {
+	set, err := Load("tasks.yaml")
+	if err != nil {
+		t.Fatalf("load frozen set: %v", err)
+	}
+	if set.TargetSHA != "1651351386ab31d8ae492c8a4922797714ca97d1" {
+		t.Errorf("unexpected pinned SHA %q", set.TargetSHA)
+	}
+	if len(set.Tasks) < 10 {
+		t.Errorf("frozen set has only %d tasks", len(set.Tasks))
+	}
+	var loc int
+	for _, task := range set.Tasks {
+		if task.Bucket == Localization {
+			loc++
+		}
+	}
+	if loc == 0 {
+		t.Error("frozen set has no localization tasks (the headline would be empty)")
+	}
+}
+
 func TestRenderMarkdown(t *testing.T) {
 	set := &TaskSet{TargetRepo: "github.com/django/django", TargetSHA: "abc123"}
 	results := []TaskResult{
