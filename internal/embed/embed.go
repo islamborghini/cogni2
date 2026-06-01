@@ -68,6 +68,34 @@ func batched(ctx context.Context, texts []string, maxItems, maxTokens int, fn fu
 // size batches; exact counting is the meter's job, not the embedder's.
 func estTokens(s string) int { return len(s)/4 + 1 }
 
+// truncateRunes caps s to at most maxChars runes (no-op when maxChars <= 0). It
+// is a safety net so a single oversized input — e.g. one very long line the AST
+// chunker cannot split further — cannot exceed a model's context window and fail
+// the whole batch.
+func truncateRunes(s string, maxChars int) string {
+	if maxChars <= 0 || len(s) <= maxChars {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxChars {
+		return s
+	}
+	return string(r[:maxChars])
+}
+
+// truncateAll applies truncateRunes to every text, returning the input unchanged
+// when no cap is set.
+func truncateAll(texts []string, maxChars int) []string {
+	if maxChars <= 0 {
+		return texts
+	}
+	out := make([]string, len(texts))
+	for i, s := range texts {
+		out[i] = truncateRunes(s, maxChars)
+	}
+	return out
+}
+
 // embedResponse is the shared OpenAI/Voyage embeddings response shape.
 type embedResponse struct {
 	Data []struct {
