@@ -135,6 +135,33 @@ func TestVoyage_RetriesThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes("hello", 0); got != "hello" {
+		t.Errorf("no cap: got %q", got)
+	}
+	if got := truncateRunes("hello", 10); got != "hello" {
+		t.Errorf("under cap: got %q", got)
+	}
+	if got := truncateRunes("hello", 3); got != "hel" {
+		t.Errorf("over cap: got %q", got)
+	}
+	if got := truncateRunes("héllo", 2); got != "hé" { // rune-safe, not byte-safe
+		t.Errorf("multibyte: got %q", got)
+	}
+}
+
+func TestNewOpenAICompatible_DefaultsInputCap(t *testing.T) {
+	t.Setenv("EMBED_MODEL", "nomic-embed-text")
+	t.Setenv("EMBED_MAX_INPUT_CHARS", "")
+	e, err := NewOpenAICompatible()
+	if err != nil {
+		t.Fatalf("NewOpenAICompatible: %v", err)
+	}
+	if e.MaxInputChars != defaultOpenAIMaxInputChars {
+		t.Errorf("MaxInputChars = %d, want default %d", e.MaxInputChars, defaultOpenAIMaxInputChars)
+	}
+}
+
 func TestFromEnv(t *testing.T) {
 	t.Setenv("EMBED_PROVIDER", "ollama")
 	t.Setenv("EMBED_MODEL", "nomic-embed-text")

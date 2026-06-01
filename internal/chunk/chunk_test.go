@@ -1,6 +1,7 @@
 package chunk
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -124,6 +125,34 @@ func TestFile_MergeSameKind(t *testing.T) {
 	ab := find(t, merged, retrieve.KindFunction, 4)
 	if ab.EndLine != 8 || !strings.Contains(ab.Content, "return 1") || !strings.Contains(ab.Content, "return 2") {
 		t.Errorf("alpha+beta not merged: %+v", ab)
+	}
+}
+
+func TestFile_ClassHeaderRespectsBudget(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("class Big:\n    \"\"\"A class with very many methods.\"\"\"\n")
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&sb, "    def method_%d(self, a, b, c):\n        return a\n", i)
+	}
+	chunks, err := File("big.py", []byte(sb.String()), fieldsTok{}, Options{MaxChunkTokens: 40})
+	if err != nil {
+		t.Fatalf("File: %v", err)
+	}
+	var sawHeader bool
+	for _, c := range chunks {
+		if c.Kind != retrieve.KindClassHeader {
+			continue
+		}
+		sawHeader = true
+		if n := (fieldsTok{}).Count(c.Content); n > 40 {
+			t.Errorf("class_header is %d tokens, exceeds budget 40", n)
+		}
+		if !strings.Contains(c.Content, "class Big") {
+			t.Errorf("class_header dropped its declaration line: %q", c.Content)
+		}
+	}
+	if !sawHeader {
+		t.Fatal("no class_header chunk emitted")
 	}
 }
 

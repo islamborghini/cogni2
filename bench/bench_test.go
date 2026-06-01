@@ -111,8 +111,8 @@ func TestRenderMarkdown(t *testing.T) {
 		{ID: "loc1", Bucket: Localization, GoldSize: 2, Recall: 1.0, RetrievedTokens: 120},
 		{ID: "enum1", Bucket: Enumeration, GoldSize: 40, Recall: 0.2, RetrievedTokens: 350},
 	}
-	md := RenderMarkdown(set, results, 10)
-	for _, want := range []string{"recall@10", "abc123", "loc1", "enum1", "mean retrieved_code tokens"} {
+	md := RenderMarkdown(set, results, 10, "- embedder: `ollama` / `mxbai-embed-large`")
+	for _, want := range []string{"recall@10", "abc123", "loc1", "enum1", "mean retrieved_code tokens", "mxbai-embed-large"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("rendered report missing %q\n%s", want, md)
 		}

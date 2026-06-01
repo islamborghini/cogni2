@@ -11,7 +11,7 @@
 //	# default: Voyage (code-specialized)
 //	export VOYAGE_API_KEY=…
 //	# or a local, no-quota OpenAI-compatible server (e.g. Ollama):
-//	#   export EMBED_PROVIDER=ollama EMBED_MODEL=nomic-embed-text
+//	#   export EMBED_PROVIDER=ollama EMBED_MODEL=mxbai-embed-large CHUNK_MAX_TOKENS=400
 //	go test -tags eval ./bench/ -run Retrieval -v -timeout 60m
 package bench
 
@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/islamborghini/cogni2/internal/chunk"
@@ -59,12 +60,23 @@ func TestRetrieval(t *testing.T) {
 		t.Fatalf("query embedder: %v", err)
 	}
 
+	// The budget is in tiktoken tokens; a wordpiece embedder (e.g. nomic via
+	// Ollama) tokenizes code more finely, so set CHUNK_MAX_TOKENS lower than the
+	// default to keep chunks within its context window.
+	maxTok := chunk.DefaultMaxChunkTokens
+	if v := os.Getenv("CHUNK_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxTok = n
+		}
+	}
+	t.Logf("chunk budget: %d tokens", maxTok)
+
 	dbPath := filepath.Join(t.TempDir(), "stage1.db")
 	store, err := index.Open(dbPath, index.Config{
 		DocEmbedder:   docEmb,
 		QueryEmbedder: queryEmb,
 		Tokenizer:     tok,
-		ChunkOptions:  chunk.Options{MaxChunkTokens: chunk.DefaultMaxChunkTokens, Merge: true},
+		ChunkOptions:  chunk.Options{MaxChunkTokens: maxTok, Merge: true},
 	})
 	if err != nil {
 		t.Fatalf("open index: %v", err)
@@ -108,7 +120,15 @@ func TestRetrieval(t *testing.T) {
 	if err := os.MkdirAll("results", 0o755); err != nil {
 		t.Fatalf("mkdir results: %v", err)
 	}
-	md := RenderMarkdown(set, results, retrievalK)
+	provider := os.Getenv("EMBED_PROVIDER")
+	if provider == "" {
+		provider = "voyage"
+	}
+	run := fmt.Sprintf("- embedder: `%s` / `%s`\n- chunk budget: %d tokens (tiktoken), merge on\n"+
+		"- corpus: %d files, %d chunks\n- k: %d\n"+
+		"- note: a general-purpose embedder is a floor; `voyage-code-3` is the code-specialized reference.",
+		provider, envOrDefault("EMBED_MODEL", "voyage-code-3"), maxTok, files, chunks, retrievalK)
+	md := RenderMarkdown(set, results, retrievalK, run)
 	if err := os.WriteFile(filepath.Join("results", "stage1.md"), []byte(md), 0o644); err != nil {
 		t.Fatalf("write stage1.md: %v", err)
 	}
@@ -116,4 +136,11 @@ func TestRetrieval(t *testing.T) {
 	recall, meanTok := Headline(results)
 	fmt.Printf("\n=== Stage 1 ===\nrecall@%d (localization) = %.3f\nmean_retrieved_tokens = %.0f\n",
 		retrievalK, recall, meanTok)
+}
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

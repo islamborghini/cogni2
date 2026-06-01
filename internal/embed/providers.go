@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,7 +35,10 @@ type Voyage struct {
 	// MaxBatchTokens caps the estimated tokens per request (0 = no cap). Useful
 	// on rate-limited tiers with a low tokens-per-minute ceiling.
 	MaxBatchTokens int
-	Client         *http.Client
+	// MaxInputChars truncates each input (0 = no cap). Voyage's context is large,
+	// so this is normally unset; exposed for symmetry.
+	MaxInputChars int
+	Client        *http.Client
 }
 
 type voyageRequest struct {
@@ -67,6 +71,7 @@ func (v *Voyage) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	if client == nil {
 		client = &http.Client{Timeout: httpTimeout}
 	}
+	texts = truncateAll(texts, v.MaxInputChars)
 	return batched(ctx, texts, v.BatchSize, v.MaxBatchTokens, func(ctx context.Context, batch []string) ([][]float32, error) {
 		return postEmbeddings(ctx, client, v.Endpoint, v.APIKey, voyageRequest{
 			Input:           batch,
@@ -87,8 +92,18 @@ type OpenAICompatible struct {
 	Endpoint       string
 	BatchSize      int
 	MaxBatchTokens int
-	Client         *http.Client
+	// MaxInputChars truncates each input to this many runes (0 = no cap). Local
+	// models like nomic-embed-text have a small context window; the AST chunker
+	// usually keeps chunks small enough, but a single unsplittable long line can
+	// still overflow it, so this is the backstop.
+	MaxInputChars int
+	Client        *http.Client
 }
+
+// defaultOpenAIMaxInputChars keeps a single input comfortably under a small
+// local context window (~2k tokens for nomic-embed-text, which tokenizes code at
+// well under 2 chars/token).
+const defaultOpenAIMaxInputChars = 2600
 
 // NewOpenAICompatible builds an embedder for any OpenAI-shaped /v1/embeddings
 // endpoint (OpenAI, or a local Ollama/TEI server). It reads EMBED_MODEL
@@ -99,11 +114,18 @@ func NewOpenAICompatible() (*OpenAICompatible, error) {
 	if model == "" {
 		return nil, errors.New("embed: EMBED_MODEL is required for the OpenAI-compatible provider")
 	}
+	maxInput := defaultOpenAIMaxInputChars
+	if v := os.Getenv("EMBED_MAX_INPUT_CHARS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxInput = n
+		}
+	}
 	return &OpenAICompatible{
-		APIKey:   os.Getenv("EMBED_API_KEY"),
-		Model:    model,
-		Endpoint: envOr("EMBED_ENDPOINT", defaultOllamaEndpoint),
-		Client:   &http.Client{Timeout: httpTimeout},
+		APIKey:        os.Getenv("EMBED_API_KEY"),
+		Model:         model,
+		Endpoint:      envOr("EMBED_ENDPOINT", defaultOllamaEndpoint),
+		MaxInputChars: maxInput,
+		Client:        &http.Client{Timeout: httpTimeout},
 	}, nil
 }
 
@@ -118,6 +140,7 @@ func (o *OpenAICompatible) Embed(ctx context.Context, texts []string) ([][]float
 	if client == nil {
 		client = &http.Client{Timeout: httpTimeout}
 	}
+	texts = truncateAll(texts, o.MaxInputChars)
 	return batched(ctx, texts, o.BatchSize, o.MaxBatchTokens, func(ctx context.Context, batch []string) ([][]float32, error) {
 		return postEmbeddings(ctx, client, o.Endpoint, o.APIKey, openAIRequest{
 			Input: batch,

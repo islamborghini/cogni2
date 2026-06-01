@@ -194,8 +194,30 @@ func (c *chunker) emitClass(outer, def *ts.Node) {
 		kind:      retrieve.KindClassHeader,
 		startByte: outer.StartByte(),
 		endByte:   outer.EndByte(),
-		content:   b.String(),
+		content:   c.capToBudget(b.String()),
 	})
+}
+
+// capToBudget trims a synthesized chunk to the token budget at a line boundary.
+// A class header for a class with very many methods can otherwise exceed both
+// the budget and an embedder's context window; the dropped signatures are not
+// lost to retrieval because each method also has its own chunk. The class
+// declaration line is always kept.
+func (c *chunker) capToBudget(s string) string {
+	if c.tok.Count(s) <= c.max {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	var b strings.Builder
+	b.WriteString(lines[0])
+	for _, ln := range lines[1:] {
+		if c.tok.Count(b.String()+"\n"+ln) > c.max {
+			break
+		}
+		b.WriteByte('\n')
+		b.WriteString(ln)
+	}
+	return b.String()
 }
 
 // signature returns the declaration line(s) of def (decorators included via
