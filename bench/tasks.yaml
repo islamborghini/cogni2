@@ -1,0 +1,137 @@
+# Stage 1 frozen retrieval benchmark.
+#
+# Target: django/django @ 1651351386ab31d8ae492c8a4922797714ca97d1 (Django 4.2.3).
+# Ground truth ported from the cogni v1 Django task sets and re-verified by direct
+# search against a checkout at this exact SHA.
+#
+# Conventions:
+#   - `path` is repo-relative (the eval roots at the repository top, so paths
+#     carry the `django/` package prefix).
+#   - each `gold` span is the 1-based definition line of the symbol a correct
+#     retrieval must surface; a retrieved chunk counts as a hit when its line
+#     range overlaps the span (so the method/class chunk containing the def line
+#     scores it).
+#   - `bucket: localization` => a bounded set of spans answers the query, so
+#     recall@10 is meaningful (these form the headline). `bucket: enumeration`
+#     => the answer is a large set that cannot fit in 10 chunks by construction;
+#     reported for reference only.
+#
+# This set is intentionally conservative: every gold span is verified. It can
+# grow toward 20 as more enumeration tasks get fully labeled.
+
+target_repo: https://github.com/django/django
+target_sha: 1651351386ab31d8ae492c8a4922797714ca97d1
+
+tasks:
+  - id: slugify-implementation
+    query: "How does slugify() in django.utils.text convert a string into a slug? Walk through the Unicode handling, non-alphanumeric stripping, and whitespace steps."
+    bucket: localization
+    source: v1:explain-slugify-implementation
+    gold:
+      - {path: django/utils/text.py, start: 420, end: 420}
+
+  - id: wsgi-to-view-trace
+    query: "Trace the call chain from WSGIHandler.__call__ down to where the user's view is invoked, listing each intermediate handler method in order."
+    bucket: localization
+    source: v1:wsgi-to-view-trace
+    gold:
+      - {path: django/core/handlers/wsgi.py, start: 120, end: 120}
+      - {path: django/core/handlers/base.py, start: 136, end: 136}
+      - {path: django/core/handlers/base.py, start: 174, end: 174}
+      - {path: django/core/handlers/base.py, start: 345, end: 345}
+
+  - id: signal-receivers-request-finished
+    query: "Which receiver functions are connected to the request_finished signal, and where is each receiver function defined?"
+    bucket: localization
+    source: v1:signal-receivers-trace
+    gold:
+      - {path: django/core/cache/__init__.py, start: 60, end: 60}
+      - {path: django/db/__init__.py, start: 55, end: 55}
+      - {path: django/core/handlers/base.py, start: 368, end: 368}
+      - {path: django/utils/autoreload.py, start: 585, end: 585}
+
+  - id: m2m-changed-send-sites
+    query: "Where in Django's source is the m2m_changed signal sent, and which m2m operation (add, remove, clear) does each send correspond to?"
+    bucket: localization
+    source: v1:trace-m2m-changed-senders
+    gold:
+      - {path: django/db/models/fields/related_descriptors.py, start: 1176, end: 1176}
+      - {path: django/db/models/fields/related_descriptors.py, start: 1189, end: 1189}
+      - {path: django/db/models/fields/related_descriptors.py, start: 1422, end: 1422}
+      - {path: django/db/models/fields/related_descriptors.py, start: 1447, end: 1447}
+      - {path: django/db/models/fields/related_descriptors.py, start: 1477, end: 1477}
+      - {path: django/db/models/fields/related_descriptors.py, start: 1496, end: 1496}
+
+  - id: reverse-url-helper-def
+    query: "Where is the reverse() URL helper in django.urls defined and what arguments does it take?"
+    bucket: localization
+    source: v1:find-reverse-url-callers
+    gold:
+      - {path: django/urls/base.py, start: 27, end: 27}
+
+  - id: force-str-implementation
+    query: "How does force_str() in django.utils.encoding coerce a value to a string?"
+    bucket: localization
+    gold:
+      - {path: django/utils/encoding.py, start: 56, end: 56}
+
+  - id: cached-property-descriptor
+    query: "How is Django's cached_property descriptor implemented in django.utils.functional?"
+    bucket: localization
+    gold:
+      - {path: django/utils/functional.py, start: 8, end: 8}
+
+  - id: queryset-filter-def
+    query: "Where is QuerySet.filter defined and what does it delegate to?"
+    bucket: localization
+    gold:
+      - {path: django/db/models/query.py, start: 1430, end: 1430}
+
+  - id: csrf-process-view
+    query: "How does CsrfViewMiddleware validate the CSRF token on an incoming request in its process_view method?"
+    bucket: localization
+    gold:
+      - {path: django/middleware/csrf.py, start: 419, end: 419}
+
+  - id: template-render
+    query: "How does the Template class in django.template.base render a context into a string?"
+    bucket: localization
+    gold:
+      - {path: django/template/base.py, start: 138, end: 138}
+      - {path: django/template/base.py, start: 169, end: 169}
+
+  - id: paginator-page
+    query: "How does Paginator.page build a Page object for a given page number?"
+    bucket: localization
+    gold:
+      - {path: django/core/paginator.py, start: 70, end: 70}
+
+  - id: form-validation
+    query: "How does a Django Form validate itself — where are is_valid and full_clean defined on BaseForm?"
+    bucket: localization
+    gold:
+      - {path: django/forms/forms.py, start: 199, end: 199}
+      - {path: django/forms/forms.py, start: 420, end: 420}
+
+  - id: http-response-class-tree
+    query: "Give the full class hierarchy of HTTP response types in Django, starting from HttpResponseBase: every direct or transitive subclass."
+    bucket: enumeration
+    source: v1:http-response-class-tree
+    gold:
+      - {path: django/http/response.py, start: 102, end: 102}
+      - {path: django/http/response.py, start: 364, end: 364}
+      - {path: django/http/response.py, start: 432, end: 432}
+      - {path: django/http/response.py, start: 531, end: 531}
+      - {path: django/http/response.py, start: 611, end: 611}
+      - {path: django/http/response.py, start: 637, end: 637}
+      - {path: django/http/response.py, start: 641, end: 641}
+      - {path: django/http/response.py, start: 645, end: 645}
+      - {path: django/http/response.py, start: 661, end: 661}
+      - {path: django/http/response.py, start: 665, end: 665}
+      - {path: django/http/response.py, start: 669, end: 669}
+      - {path: django/http/response.py, start: 673, end: 673}
+      - {path: django/http/response.py, start: 689, end: 689}
+      - {path: django/http/response.py, start: 693, end: 693}
+      - {path: django/http/response.py, start: 701, end: 701}
+      - {path: django/template/response.py, start: 10, end: 10}
+      - {path: django/template/response.py, start: 147, end: 147}
