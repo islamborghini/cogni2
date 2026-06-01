@@ -3,15 +3,18 @@ package embed
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
-// Default endpoints and model for the code-specialized default provider.
+// Default endpoints and model for the providers.
 const (
 	defaultVoyageEndpoint = "https://api.voyageai.com/v1/embeddings"
 	defaultVoyageModel    = "voyage-code-3"
+	defaultOllamaEndpoint = "http://localhost:11434/v1/embeddings"
 )
 
 // httpTimeout bounds a single embeddings request.
@@ -28,7 +31,10 @@ type Voyage struct {
 	InputType string // "document" | "query"
 	Dim       int    // output_dimension; 0 leaves the model default
 	BatchSize int
-	Client    *http.Client
+	// MaxBatchTokens caps the estimated tokens per request (0 = no cap). Useful
+	// on rate-limited tiers with a low tokens-per-minute ceiling.
+	MaxBatchTokens int
+	Client         *http.Client
 }
 
 type voyageRequest struct {
@@ -61,7 +67,7 @@ func (v *Voyage) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	if client == nil {
 		client = &http.Client{Timeout: httpTimeout}
 	}
-	return batched(ctx, texts, v.BatchSize, func(ctx context.Context, batch []string) ([][]float32, error) {
+	return batched(ctx, texts, v.BatchSize, v.MaxBatchTokens, func(ctx context.Context, batch []string) ([][]float32, error) {
 		return postEmbeddings(ctx, client, v.Endpoint, v.APIKey, voyageRequest{
 			Input:           batch,
 			Model:           v.Model,
@@ -76,11 +82,29 @@ func (v *Voyage) Embed(ctx context.Context, texts []string) ([][]float32, error)
 // zero-quota iteration. The API key may be empty for unauthenticated local
 // servers.
 type OpenAICompatible struct {
-	APIKey    string
-	Model     string
-	Endpoint  string
-	BatchSize int
-	Client    *http.Client
+	APIKey         string
+	Model          string
+	Endpoint       string
+	BatchSize      int
+	MaxBatchTokens int
+	Client         *http.Client
+}
+
+// NewOpenAICompatible builds an embedder for any OpenAI-shaped /v1/embeddings
+// endpoint (OpenAI, or a local Ollama/TEI server). It reads EMBED_MODEL
+// (required), EMBED_ENDPOINT (defaults to a local Ollama server), and the
+// optional EMBED_API_KEY.
+func NewOpenAICompatible() (*OpenAICompatible, error) {
+	model := os.Getenv("EMBED_MODEL")
+	if model == "" {
+		return nil, errors.New("embed: EMBED_MODEL is required for the OpenAI-compatible provider")
+	}
+	return &OpenAICompatible{
+		APIKey:   os.Getenv("EMBED_API_KEY"),
+		Model:    model,
+		Endpoint: envOr("EMBED_ENDPOINT", defaultOllamaEndpoint),
+		Client:   &http.Client{Timeout: httpTimeout},
+	}, nil
 }
 
 type openAIRequest struct {
@@ -94,12 +118,26 @@ func (o *OpenAICompatible) Embed(ctx context.Context, texts []string) ([][]float
 	if client == nil {
 		client = &http.Client{Timeout: httpTimeout}
 	}
-	return batched(ctx, texts, o.BatchSize, func(ctx context.Context, batch []string) ([][]float32, error) {
+	return batched(ctx, texts, o.BatchSize, o.MaxBatchTokens, func(ctx context.Context, batch []string) ([][]float32, error) {
 		return postEmbeddings(ctx, client, o.Endpoint, o.APIKey, openAIRequest{
 			Input: batch,
 			Model: o.Model,
 		})
 	})
+}
+
+// FromEnv selects an embedder by the EMBED_PROVIDER env var: "voyage" (default)
+// or "openai"/"ollama"/"local" for the OpenAI-compatible path. inputType is the
+// Voyage document/query hint and is ignored by other providers.
+func FromEnv(inputType string) (Embedder, error) {
+	switch strings.ToLower(os.Getenv("EMBED_PROVIDER")) {
+	case "", "voyage":
+		return NewVoyage(inputType)
+	case "openai", "ollama", "local":
+		return NewOpenAICompatible()
+	default:
+		return nil, fmt.Errorf("embed: unknown EMBED_PROVIDER %q", os.Getenv("EMBED_PROVIDER"))
+	}
 }
 
 func envOr(key, fallback string) string {

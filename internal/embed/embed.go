@@ -17,6 +17,8 @@ import (
 	"math/rand"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,26 +31,42 @@ type Embedder interface {
 // defaultBatchSize bounds how many texts go in one HTTP request.
 const defaultBatchSize = 128
 
-// batched applies fn over texts in fixed-size batches and concatenates the
-// results, so a provider's per-request limit is respected transparently.
-func batched(ctx context.Context, texts []string, size int, fn func(context.Context, []string) ([][]float32, error)) ([][]float32, error) {
-	if size <= 0 {
-		size = defaultBatchSize
+// batched applies fn over texts in batches and concatenates the results. A batch
+// is capped at maxItems texts and, when maxTokens > 0, at roughly maxTokens
+// estimated tokens — the latter keeps a single request under a provider's
+// per-minute token ceiling (e.g. Voyage's free tier). A text larger than the
+// token cap is still sent on its own.
+func batched(ctx context.Context, texts []string, maxItems, maxTokens int, fn func(context.Context, []string) ([][]float32, error)) ([][]float32, error) {
+	if maxItems <= 0 {
+		maxItems = defaultBatchSize
 	}
 	out := make([][]float32, 0, len(texts))
-	for i := 0; i < len(texts); i += size {
-		j := i + size
-		if j > len(texts) {
-			j = len(texts)
+	for i := 0; i < len(texts); {
+		j, tokens := i, 0
+		for j < len(texts) && j-i < maxItems {
+			t := estTokens(texts[j])
+			if maxTokens > 0 && j > i && tokens+t > maxTokens {
+				break
+			}
+			tokens += t
+			j++
+		}
+		if j == i { // single oversized text: send it alone
+			j = i + 1
 		}
 		vecs, err := fn(ctx, texts[i:j])
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, vecs...)
+		i = j
 	}
 	return out, nil
 }
+
+// estTokens is a cheap byte-based token estimate (~4 bytes/token) used only to
+// size batches; exact counting is the meter's job, not the embedder's.
+func estTokens(s string) int { return len(s)/4 + 1 }
 
 // embedResponse is the shared OpenAI/Voyage embeddings response shape.
 type embedResponse struct {
@@ -58,23 +76,31 @@ type embedResponse struct {
 	} `json:"data"`
 }
 
+// Retry tuning. A 429 with a Retry-After header is honored up to maxRetryDelay,
+// which matters on rate-limited tiers (e.g. Voyage free at 3 RPM).
+const (
+	maxAttempts    = 6
+	maxRetryDelay  = 60 * time.Second
+	baseRetryDelay = time.Second
+)
+
 // postEmbeddings sends reqBody to endpoint as JSON with a bearer token, retrying
-// transient failures (429 and 5xx) with exponential backoff, and returns the
-// embeddings ordered by their response index.
+// transient failures (429 and 5xx) with exponential backoff that honors a
+// Retry-After header, and returns the embeddings ordered by their response index.
 func postEmbeddings(ctx context.Context, client *http.Client, endpoint, apiKey string, reqBody any) ([][]float32, error) {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, err
 	}
 
-	const maxAttempts = 4
 	var lastErr error
+	var delay time.Duration
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
+		if delay > 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(time.Duration(1<<uint(attempt-1)) * time.Second):
+			case <-time.After(delay):
 			}
 		}
 
@@ -90,13 +116,22 @@ func postEmbeddings(ctx context.Context, client *http.Client, endpoint, apiKey s
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
+			delay = backoff(attempt)
 			continue
 		}
+		retryAfter, hasRetryAfter := parseRetryAfter(resp)
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			lastErr = fmt.Errorf("embed: %s: %s", resp.Status, snippet(body))
+			delay = backoff(attempt)
+			if hasRetryAfter && retryAfter > delay {
+				delay = retryAfter
+			}
+			if delay > maxRetryDelay {
+				delay = maxRetryDelay
+			}
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -115,6 +150,33 @@ func postEmbeddings(ctx context.Context, client *http.Client, endpoint, apiKey s
 		return out, nil
 	}
 	return nil, fmt.Errorf("embed: giving up after %d attempts: %w", maxAttempts, lastErr)
+}
+
+// backoff returns the exponential delay for a given attempt, capped.
+func backoff(attempt int) time.Duration {
+	d := baseRetryDelay << uint(attempt)
+	if d > maxRetryDelay {
+		d = maxRetryDelay
+	}
+	return d
+}
+
+// parseRetryAfter reads a Retry-After header in either delta-seconds or HTTP-date
+// form.
+func parseRetryAfter(resp *http.Response) (time.Duration, bool) {
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if v == "" {
+		return 0, false
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d, true
+		}
+	}
+	return 0, false
 }
 
 func snippet(b []byte) string {
