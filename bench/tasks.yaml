@@ -135,3 +135,77 @@ tasks:
       - {path: django/http/response.py, start: 701, end: 701}
       - {path: django/template/response.py, start: 10, end: 10}
       - {path: django/template/response.py, start: 147, end: 147}
+
+  # --- cross-file / multi-span localization (added to grow the set) ---
+
+  - id: model-save-flow
+    query: "How does Model.save persist an instance — trace save() down through save_base() into the _do_update / _do_insert helpers."
+    bucket: localization
+    gold:
+      - {path: django/db/models/base.py, start: 767, end: 767}
+      - {path: django/db/models/base.py, start: 835, end: 835}
+      - {path: django/db/models/base.py, start: 1028, end: 1028}
+      - {path: django/db/models/base.py, start: 1056, end: 1056}
+
+  - id: url-resolver-resolve
+    query: "How does URLResolver.resolve match a request path to a view callable?"
+    bucket: localization
+    gold:
+      - {path: django/urls/resolvers.py, start: 456, end: 456}
+      - {path: django/urls/resolvers.py, start: 657, end: 657}
+
+  - id: middleware-load-chain
+    query: "How does BaseHandler.load_middleware build the middleware chain that wraps the view?"
+    bucket: localization
+    gold:
+      - {path: django/core/handlers/base.py, start: 26, end: 26}
+
+  - id: template-variable-resolution
+    query: "How does the template Variable class resolve a dotted lookup against the context in resolve / _resolve_lookup?"
+    bucket: localization
+    gold:
+      - {path: django/template/base.py, start: 776, end: 776}
+      - {path: django/template/base.py, start: 843, end: 843}
+      - {path: django/template/base.py, start: 867, end: 867}
+
+  - id: password-hashing
+    query: "How does Django hash and verify a password — where are make_password and check_password defined?"
+    bucket: localization
+    gold:
+      - {path: django/contrib/auth/hashers.py, start: 38, end: 38}
+      - {path: django/contrib/auth/hashers.py, start: 72, end: 72}
+
+  - id: request-started-receivers
+    query: "Which receiver functions are connected to the request_started signal, and where is each defined?"
+    bucket: localization
+    source: v1:trace-request-lifecycle-signals
+    gold:
+      - {path: django/db/__init__.py, start: 45, end: 45}
+      - {path: django/db/__init__.py, start: 55, end: 55}
+
+  # --- enumeration (fully labeled, reference bucket) ---
+
+  - id: make-aware-call-sites
+    query: "List every place in django/ (not tests) that calls timezone.make_aware(), e.g. to remove the deprecated is_dst parameter."
+    bucket: enumeration
+    source: v1:find-make-aware-call-sites
+    gold:
+      - {path: django/templatetags/tz.py, start: 81, end: 81}
+      - {path: django/forms/utils.py, start: 222, end: 222}
+      - {path: django/utils/dateformat.py, start: 270, end: 270}
+      - {path: django/contrib/syndication/views.py, start: 209, end: 209}
+      - {path: django/contrib/syndication/views.py, start: 213, end: 213}
+      - {path: django/contrib/admin/views/main.py, start: 227, end: 227}
+      - {path: django/contrib/admin/views/main.py, start: 228, end: 228}
+      - {path: django/contrib/sitemaps/views.py, start: 49, end: 49}
+      - {path: django/http/response.py, start: 242, end: 242}
+      - {path: django/db/backends/oracle/operations.py, start: 256, end: 256}
+      - {path: django/db/backends/mysql/operations.py, start: 331, end: 331}
+      - {path: django/db/backends/sqlite3/operations.py, start: 316, end: 316}
+      - {path: django/db/backends/base/operations.py, start: 626, end: 626}
+      - {path: django/db/backends/base/operations.py, start: 627, end: 627}
+      - {path: django/db/models/functions/datetime.py, start: 346, end: 346}
+      - {path: django/db/models/fields/__init__.py, start: 1542, end: 1542}
+      - {path: django/db/models/fields/__init__.py, start: 1601, end: 1601}
+      - {path: django/views/decorators/http.py, start: 94, end: 94}
+      - {path: django/views/generic/dates.py, start: 279, end: 279}
