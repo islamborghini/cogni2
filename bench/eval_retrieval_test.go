@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/islamborghini/cogni2/internal/chunk"
@@ -59,12 +60,23 @@ func TestRetrieval(t *testing.T) {
 		t.Fatalf("query embedder: %v", err)
 	}
 
+	// The budget is in tiktoken tokens; a wordpiece embedder (e.g. nomic via
+	// Ollama) tokenizes code more finely, so set CHUNK_MAX_TOKENS lower than the
+	// default to keep chunks within its context window.
+	maxTok := chunk.DefaultMaxChunkTokens
+	if v := os.Getenv("CHUNK_MAX_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxTok = n
+		}
+	}
+	t.Logf("chunk budget: %d tokens", maxTok)
+
 	dbPath := filepath.Join(t.TempDir(), "stage1.db")
 	store, err := index.Open(dbPath, index.Config{
 		DocEmbedder:   docEmb,
 		QueryEmbedder: queryEmb,
 		Tokenizer:     tok,
-		ChunkOptions:  chunk.Options{MaxChunkTokens: chunk.DefaultMaxChunkTokens, Merge: true},
+		ChunkOptions:  chunk.Options{MaxChunkTokens: maxTok, Merge: true},
 	})
 	if err != nil {
 		t.Fatalf("open index: %v", err)
