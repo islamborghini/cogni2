@@ -12,8 +12,8 @@ Target: `https://github.com/django/django` @ `1651351386ab31d8ae492c8a4922797714
 
 ## Headline
 
-- **recall@10 (localization, macro-avg): 0.819**
-- **mean retrieved_code tokens: 3181**
+- **recall@10 (localization, macro-avg): 0.824**
+- **mean retrieved_code tokens: 3554**
 
 recall@10 is averaged over localization tasks only. Enumeration tasks (|gold| > 10) are bounded by 10/|gold| by construction and are listed for reference, not folded into the headline.
 
@@ -26,12 +26,19 @@ recall@10 is averaged over localization tasks only. Enumeration tasks (|gold| > 
 | force-str-implementation | localization | 1 | 1.000 | 2918 |
 | form-validation | localization | 2 | 1.000 | 3560 |
 | m2m-changed-send-sites | localization | 6 | 0.833 | 6450 |
-| paginator-page | localization | 1 | 1.000 | 3852 |
+| middleware-load-chain | localization | 1 | 1.000 | 1587 |
+| model-save-flow | localization | 4 | 1.000 | 4983 |
+| paginator-page | localization | 1 | 1.000 | 3360 |
+| password-hashing | localization | 2 | 1.000 | 5814 |
 | queryset-filter-def | localization | 1 | 0.000 | 2643 |
+| request-started-receivers | localization | 2 | 1.000 | 3385 |
 | reverse-url-helper-def | localization | 1 | 1.000 | 3158 |
 | signal-receivers-request-finished | localization | 4 | 0.000 | 3312 |
 | slugify-implementation | localization | 1 | 1.000 | 2415 |
-| template-render | localization | 2 | 1.000 | 1360 |
+| template-render | localization | 2 | 1.000 | 1560 |
+| template-variable-resolution | localization | 3 | 1.000 | 3772 |
+| url-resolver-resolve | localization | 2 | 0.000 | 4208 |
 | wsgi-to-view-trace | localization | 4 | 1.000 | 2747 |
 | http-response-class-tree | enumeration | 17 | 0.235 | 1861 |
+| make-aware-call-sites | enumeration | 19 | 0.000 | 6273 |
 
