@@ -204,6 +204,15 @@ func extractDef(n *ts.Node, src []byte, parent string) (Symbol, *ts.Node, bool) 
 	return sym, nil, true
 }
 
+// FirstDocstring returns the first-paragraph docstring of a def/class body block
+// — the same summary rule used to populate Symbol.Docstring at index time — or ""
+// if the body has no leading bare-string statement. Exposed so the Stage 2
+// skeletonizer keeps docstrings by the identical rule as Stage 1 rather than
+// reimplementing (or diverging from) it.
+func FirstDocstring(body *ts.Node, src []byte) string {
+	return extractDocstring(body, src)
+}
+
 // extractDocstring returns the first-paragraph docstring for the given body
 // block, or "" if the first statement is not a bare string. The result is
 // trimmed, cut at the first blank line, and capped at docstringMaxLen runes.
