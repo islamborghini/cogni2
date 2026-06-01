@@ -13,10 +13,16 @@
 //	# or a local, no-quota OpenAI-compatible server (e.g. Ollama):
 //	#   export EMBED_PROVIDER=ollama EMBED_MODEL=mxbai-embed-large CHUNK_MAX_TOKENS=400
 //	go test -tags eval ./bench/ -run Retrieval -v -timeout 60m
+//
+// The index is cached under COGNI_INDEX_DIR (default $TMPDIR/cogni2-index), keyed
+// by repo + embedder + budget. The first run pays to embed the corpus; later runs
+// (more tasks, Stage 2/3) reuse the stored vectors and only embed the cheap task
+// queries, so re-measuring is effectively free.
 package bench
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,18 +66,35 @@ func TestRetrieval(t *testing.T) {
 		t.Fatalf("query embedder: %v", err)
 	}
 
-	// The budget is in tiktoken tokens; a wordpiece embedder (e.g. nomic via
-	// Ollama) tokenizes code more finely, so set CHUNK_MAX_TOKENS lower than the
-	// default to keep chunks within its context window.
+	// The budget is in tiktoken tokens; a wordpiece embedder (e.g. Ollama models)
+	// tokenizes code more finely, so set CHUNK_MAX_TOKENS lower than the default
+	// to keep chunks within its context window.
 	maxTok := chunk.DefaultMaxChunkTokens
 	if v := os.Getenv("CHUNK_MAX_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxTok = n
 		}
 	}
-	t.Logf("chunk budget: %d tokens", maxTok)
+	provider := envOrDefault("EMBED_PROVIDER", "voyage")
+	model := envOrDefault("EMBED_MODEL", "voyage-code-3")
+	t.Logf("chunk budget: %d tokens; embedder %s/%s", maxTok, provider, model)
 
-	dbPath := filepath.Join(t.TempDir(), "stage1.db")
+	// Persistent, content-addressed index cache keyed by repo + embedder + budget.
+	// Re-running the same config reuses stored vectors (the store's SHA cache
+	// skips re-embedding unchanged chunks), so adding tasks / running later stages
+	// costs only the cheap per-task query embeddings — not a full re-index.
+	// Override the location with COGNI_INDEX_DIR.
+	cacheDir := os.Getenv("COGNI_INDEX_DIR")
+	if cacheDir == "" {
+		cacheDir = filepath.Join(os.TempDir(), "cogni2-index")
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir index cache: %v", err)
+	}
+	key := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s|%d", repo, provider, model, maxTok)))
+	dbPath := filepath.Join(cacheDir, fmt.Sprintf("index-%x.db", key[:8]))
+	t.Logf("index cache: %s", dbPath)
+
 	store, err := index.Open(dbPath, index.Config{
 		DocEmbedder:   docEmb,
 		QueryEmbedder: queryEmb,
@@ -84,6 +107,9 @@ func TestRetrieval(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
+	if cached, _ := store.Count(); cached > 0 {
+		t.Logf("reusing cached index (%d chunks) — unchanged files are not re-embedded", cached)
+	}
 	t.Logf("indexing %s …", repo)
 	files, err := store.BuildAll(ctx, repo)
 	if err != nil {
@@ -120,14 +146,10 @@ func TestRetrieval(t *testing.T) {
 	if err := os.MkdirAll("results", 0o755); err != nil {
 		t.Fatalf("mkdir results: %v", err)
 	}
-	provider := os.Getenv("EMBED_PROVIDER")
-	if provider == "" {
-		provider = "voyage"
-	}
 	run := fmt.Sprintf("- embedder: `%s` / `%s`\n- chunk budget: %d tokens (tiktoken), merge on\n"+
 		"- corpus: %d files, %d chunks\n- k: %d\n"+
 		"- note: a general-purpose embedder is a floor; `voyage-code-3` is the code-specialized reference.",
-		provider, envOrDefault("EMBED_MODEL", "voyage-code-3"), maxTok, files, chunks, retrievalK)
+		provider, model, maxTok, files, chunks, retrievalK)
 	md := RenderMarkdown(set, results, retrievalK, run)
 	if err := os.WriteFile(filepath.Join("results", "stage1.md"), []byte(md), 0o644); err != nil {
 		t.Fatalf("write stage1.md: %v", err)
