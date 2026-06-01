@@ -67,9 +67,11 @@ func Headline(results []TaskResult) (recallAt10, meanRetrievedTokens float64) {
 	return recallAt10, meanRetrievedTokens
 }
 
-// RenderMarkdown produces bench/results/stage1.md: the headline numbers, a
-// per-task table, and the honesty note on enumeration tasks.
-func RenderMarkdown(set *TaskSet, results []TaskResult, k int) string {
+// RenderMarkdown produces bench/results/stage1.md: the run configuration, the
+// headline numbers, a per-task table, and the honesty note on enumeration tasks.
+// run is a markdown snippet describing how the numbers were produced (embedder,
+// budget, corpus) so the report stands on its own.
+func RenderMarkdown(set *TaskSet, results []TaskResult, k int, run string) string {
 	recall, meanTok := Headline(results)
 
 	sorted := append([]TaskResult(nil), results...)
@@ -83,6 +85,9 @@ func RenderMarkdown(set *TaskSet, results []TaskResult, k int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Stage 1 — cAST retrieval baseline\n\n")
 	fmt.Fprintf(&b, "Target: `%s` @ `%s`\n\n", set.TargetRepo, set.TargetSHA)
+	if run != "" {
+		fmt.Fprintf(&b, "## Run\n\n%s\n\n", run)
+	}
 	fmt.Fprintf(&b, "## Headline\n\n")
 	fmt.Fprintf(&b, "- **recall@%d (localization, macro-avg): %.3f**\n", k, recall)
 	fmt.Fprintf(&b, "- **mean retrieved_code tokens: %.0f**\n\n", meanTok)
