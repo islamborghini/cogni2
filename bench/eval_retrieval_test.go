@@ -6,10 +6,13 @@
 // normal `go test ./...` or in CI — only when explicitly driven with an API key
 // and a checkout.
 //
-//	export VOYAGE_API_KEY=…
 //	export COGNI_EVAL=1
 //	export COGNI_BENCH_REPO=/path/to/django   # checked out at target_sha
-//	go test -tags eval ./bench/ -run Retrieval -v -timeout 30m
+//	# default: Voyage (code-specialized)
+//	export VOYAGE_API_KEY=…
+//	# or a local, no-quota OpenAI-compatible server (e.g. Ollama):
+//	#   export EMBED_PROVIDER=ollama EMBED_MODEL=nomic-embed-text
+//	go test -tags eval ./bench/ -run Retrieval -v -timeout 60m
 package bench
 
 import (
@@ -35,9 +38,6 @@ func TestRetrieval(t *testing.T) {
 	if repo == "" {
 		t.Skip("set COGNI_BENCH_REPO to a checkout of the target repo")
 	}
-	if os.Getenv("VOYAGE_API_KEY") == "" {
-		t.Skip("set VOYAGE_API_KEY for the Voyage embedder")
-	}
 
 	set, err := Load("tasks.yaml")
 	if err != nil {
@@ -48,11 +48,13 @@ func TestRetrieval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tokenizer: %v", err)
 	}
-	docEmb, err := embed.NewVoyage("document")
+	// EMBED_PROVIDER selects the embedder (Voyage by default, or an
+	// OpenAI-compatible/Ollama server); each validates its own credentials.
+	docEmb, err := embed.FromEnv("document")
 	if err != nil {
 		t.Fatalf("doc embedder: %v", err)
 	}
-	queryEmb, err := embed.NewVoyage("query")
+	queryEmb, err := embed.FromEnv("query")
 	if err != nil {
 		t.Fatalf("query embedder: %v", err)
 	}
