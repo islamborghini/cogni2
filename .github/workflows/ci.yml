@@ -44,7 +44,9 @@ jobs:
       # (it needs a Voyage key + a pinned Django checkout). We still compile it
       # so the gated code can't silently rot.
       - name: build (eval tag)
-        run: go build -tags eval ./...
+        run: |
+          go build -tags eval ./...
+          go test -tags eval -run '^$' ./...  # compile the gated eval test without running it
 
       - name: test
         run: go test -race ./...
