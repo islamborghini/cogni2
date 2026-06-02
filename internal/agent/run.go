@@ -126,7 +126,7 @@ func Run(ctx context.Context, input RunInput, deps Deps) (Outcome, Transcript, L
 
 		submitted := false
 		for _, tc := range assistant.ToolCalls {
-			if tc.Name == ToolSubmitAnswer {
+			if IsSubmitTool(tc.Name) {
 				locs, perr := parseLocations(tc.Args)
 				if perr != nil {
 					msgs = append(msgs, toolResult(tc.ID, "error: "+perr.Error(), meter.BucketHistory))

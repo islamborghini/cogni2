@@ -96,6 +96,16 @@ func TestReadFileAcceptsAliasesAndPathOnly(t *testing.T) {
 	}
 }
 
+func TestIsSubmitTool(t *testing.T) {
+	for name, want := range map[string]bool{
+		ToolSubmitAnswer: true, "commentary": true, ToolSearchCode: false, ToolReadFile: false, "": false,
+	} {
+		if got := IsSubmitTool(name); got != want {
+			t.Errorf("IsSubmitTool(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestParseLocations(t *testing.T) {
 	locs, err := parseLocations(`{"locations":[{"path":"a.py","start":1,"end":3},{"path":"b.py","start":5,"end":9}]}`)
 	if err != nil || len(locs) != 2 || locs[1].Path != "b.py" || locs[1].End != 9 {

@@ -66,6 +66,7 @@ func TestEndToEnd(t *testing.T) {
 		agent.NewSearchCodeTool(env.store, retrievalK, assemblyBudget, env.tok),
 		agent.NewReadFileTool(repo, 400),
 		agent.NewSubmitAnswerTool(),
+		agent.NewSubmitAliasTool("commentary"), // gpt-oss sometimes names its final call "commentary"
 	}
 
 	type arm struct {
