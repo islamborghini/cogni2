@@ -73,6 +73,34 @@ func TestOpenAIChatRetriesOn429(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatRetriesToolUseFailed(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"type":"invalid_request_error","code":"tool_use_failed","failed_generation":"<function=search_code>"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"search_code","arguments":"{\"query\":\"x\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2}}`)
+	}))
+	defer srv.Close()
+
+	c := &OpenAIChat{BaseURL: srv.URL, APIKey: "x", Model: "m", Client: srv.Client(), retryBase: time.Millisecond}
+	resp, err := c.Generate(context.Background(), Request{
+		Messages: []ChatMessage{{Role: RoleUser, Content: "find x"}},
+		Tools:    []ToolSpec{{Name: "search_code"}},
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if len(resp.Message.ToolCalls) != 1 || resp.Message.ToolCalls[0].Name != "search_code" {
+		t.Errorf("expected a parsed tool call after retry, got %+v", resp.Message)
+	}
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Errorf("server calls = %d, want 2 (one tool_use_failed then success)", n)
+	}
+}
+
 func TestOpenAIChatErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
