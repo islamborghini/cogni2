@@ -27,6 +27,10 @@ const (
 	chatMaxAttempts    = 6
 	chatBaseRetryDelay = time.Second
 	chatMaxRetryDelay  = 60 * time.Second
+	// maxToolUseRetries bounds re-draws on a tool_use_failed 400 (the model emitted
+	// an unparseable function call). At temperature ~0 a re-draw often succeeds;
+	// past this we give up with the full failed_generation for diagnosis.
+	maxToolUseRetries = 3
 )
 
 // OpenAIChat is a provider-agnostic OpenAI-compatible chat-completions client. It
@@ -216,6 +220,7 @@ func (c *OpenAIChat) do(ctx context.Context, path string, reqBody any) ([]byte, 
 
 	var lastErr error
 	var delay time.Duration
+	toolFails := 0
 	for attempt := 0; attempt < chatMaxAttempts; attempt++ {
 		if delay > 0 {
 			select {
@@ -242,7 +247,22 @@ func (c *OpenAIChat) do(ctx context.Context, path string, reqBody any) ([]byte, 
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		switch {
+		case resp.StatusCode == http.StatusOK:
+			return respBody, nil
+
+		case resp.StatusCode == http.StatusBadRequest && bytes.Contains(respBody, []byte("tool_use_failed")):
+			// The model emitted a function call the provider could not parse. A
+			// re-draw at temperature ~0 often produces a valid call; past the cap we
+			// surface the full failed_generation and point at a tool-reliable model.
+			toolFails++
+			if toolFails > maxToolUseRetries {
+				return nil, fmt.Errorf("agent: tool_use_failed after %d attempts (the model produced an unparseable tool call — try a more tool-reliable COGNI_AGENT_MODEL, e.g. openai/gpt-oss-120b): %s", toolFails, snippet(respBody))
+			}
+			lastErr = fmt.Errorf("agent: tool_use_failed (try %d): %s", toolFails, snippet(respBody))
+			delay = chatBackoff(base, toolFails-1)
+
+		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("agent: %s: %s", resp.Status, snippet(respBody))
 			delay = chatBackoff(base, attempt)
 			if hasRetryAfter && retryAfter > delay {
@@ -251,12 +271,10 @@ func (c *OpenAIChat) do(ctx context.Context, path string, reqBody any) ([]byte, 
 			if delay > chatMaxRetryDelay {
 				delay = chatMaxRetryDelay
 			}
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
+
+		default:
 			return nil, fmt.Errorf("agent: %s: %s", resp.Status, snippet(respBody))
 		}
-		return respBody, nil
 	}
 	return nil, fmt.Errorf("agent: giving up after %d attempts: %w", chatMaxAttempts, lastErr)
 }
@@ -285,8 +303,10 @@ func parseRetryAfter(resp *http.Response) (time.Duration, bool) {
 	return 0, false
 }
 
+// snippet bounds an error body for the message, but keeps enough to show a
+// provider's failed_generation (e.g. Groq's tool_use_failed) for diagnosis.
 func snippet(b []byte) string {
-	const max = 200
+	const max = 1500
 	if len(b) > max {
 		return string(b[:max]) + "…"
 	}
