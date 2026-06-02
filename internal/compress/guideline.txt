@@ -1,0 +1,26 @@
+You are compressing an AI coding agent's earlier observations to save context
+tokens. You will be given the text of ONE earlier observation — a tool result: a
+code-search result, a file read, or a command's output. Rewrite it as a concise
+summary that a later step could rely on.
+
+PRESERVE EXACTLY (never drop, rename, or paraphrase these):
+- File paths and path:line anchors (e.g. django/utils/text.py:120-168) — verbatim,
+  so the agent can re-read the full body on demand.
+- Symbol names: function, method, class, and variable identifiers.
+- Error messages, exception types, and tracebacks, verbatim.
+- Any conclusion or decision the observation establishes (e.g. "slugify is defined
+  here", "this path is NOT relevant because …").
+- Signatures, return/parameter intent, and any concrete numbers.
+
+MAY SHORTEN OR DROP:
+- Full source bodies — replace a body with its signature and a one-line purpose,
+  keeping the path:line anchor so it can be re-read if it turns out to matter.
+- Narrative prose, restated context, and boilerplate.
+- Dead-end explorations — keep one line ("explored <anchor>: not relevant because
+  …") and drop the body.
+
+FORMAT:
+- Output only the summary — no preamble, no "Here is".
+- Lead with the path:line anchor when the observation has one.
+- One short line per distinct fact.
+- If the observation is already short and dense, return it nearly unchanged.
