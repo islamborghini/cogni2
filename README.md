@@ -94,13 +94,16 @@ a smaller budget" challenge. The full report also carries total reduction vs. St
 1, which is smaller because Stage 2 adds the re-read anchors Stage 1 didn't carry.
 
 The safe operating point is the top of the curve: at budget 6000, skeletonization
-cuts ~5.7% of retrieved-code tokens with **zero evictions** and recall intact. Below
-that the reduction grows, but chunks begin to be dropped at budget 5000 — the
-**eviction boundary** — so recall@10 stops reflecting what the agent sees, and the
-safety claim becomes **parse-validity + chunks_dropped**, not recall. Which budget
-to ship is deferred to Stage 3, where end-to-end success rate can weigh the
-coverage/token tradeoff. Full per-budget report:
-[`bench/results/stage2.md`](bench/results/stage2.md).
+cuts **~5.7% of retrieved-code tokens** with **zero evictions** and recall intact.
+Read that number narrowly: it is 5.7% of the `retrieved_code` bucket — one of the
+four the meter tracks (system / history / output are the others) — not of an agent's
+total token spend, and because bodies are *omitted* the save only sticks if the agent
+doesn't re-read them. Below that budget the reduction grows, but chunks begin to be
+dropped at budget 5000 — the **eviction boundary** — so recall@10 stops reflecting
+what the agent sees, and the safety claim becomes **parse-validity + chunks_dropped**,
+not recall. Which budget to ship — and whether the re-read cost nets out — is deferred
+to Stage 3, where end-to-end success rate can weigh the coverage/token tradeoff. Full
+per-budget report: [`bench/results/stage2.md`](bench/results/stage2.md).
 
 ### Reproduce
 
