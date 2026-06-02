@@ -14,7 +14,7 @@ Three components, each built and measured as an independent ablation:
 
 1. **cAST retrieval** *(shipped)* — chunk the codebase along AST boundaries and
    retrieve only the chunks relevant to the task.
-2. **Skeleton-first compression** *(next)* — send signatures + docstrings instead
+2. **Skeleton-first compression** *(shipped)* — send signatures + docstrings instead
    of full bodies when the body isn't needed, with a visible `path:start-end`
    anchor so the agent can re-read on demand.
 3. **ACON-style history compression** *(planned)* — condense the agent's
@@ -66,6 +66,53 @@ The index is cached under `$COGNI_INDEX_DIR` (default `$TMPDIR/cogni2-index`),
 keyed by repo + embedder + budget, so the corpus is embedded once and later runs
 reuse the vectors.
 
+## Stage 2 — skeleton-first compression (shipped)
+
+Stage 2 changes only how retrieved chunks are *rendered*, not what is retrieved.
+The top chunks are sent as full bodies until ~60% of an assembly budget is used;
+the rest are sent as **signature + first-paragraph docstring + a body placeholder**,
+each keeping its `path:start-end` anchor so the agent can re-read the body on
+demand. Bodies are **omitted, not pruned** — a skeleton is never broken code.
+
+Because retrieval is untouched, **recall is unchanged by construction** — here it is
+a guard, not the result. So the Stage 2 result is framed *tokens down, retrieval and
+syntax intact*; "no quality loss" / "same success rate" stay unproven until
+end-to-end (Stage 3). Sweeping the assembly budget on the same corpus (recall@10
+holds at **0.824**; **111/111** emitted skeletons parse as valid Python):
+
+| budget | mean `retrieved_code` | skeletonization reduction¹ | chunks_dropped |
+|---:|---:|---:|---:|
+| 6000 | 3350 | 5.7% | 0 |
+| 5000 | 3097 | 10.7% | 1 |
+| 4000 | 2844 | 17.6% | 1 |
+| 3000 | 2334 | 24.2% | 15 |
+| 2000 | 1718 | 38.0% | 32 |
+
+¹ vs. the *same kept chunks* rendered as full bodies at the same budget — isolating
+skeleton-first compression from the budget cap, so it survives the "isn't this just
+a smaller budget" challenge. The full report also carries total reduction vs. Stage
+1, which is smaller because Stage 2 adds the re-read anchors Stage 1 didn't carry.
+
+The safe operating point is the top of the curve: at budget 6000, skeletonization
+cuts **~5.7% of retrieved-code tokens** with **zero evictions** and recall intact.
+Read that number narrowly: it is 5.7% of the `retrieved_code` bucket — one of the
+four the meter tracks (system / history / output are the others) — not of an agent's
+total token spend, and because bodies are *omitted* the save only sticks if the agent
+doesn't re-read them. Below that budget the reduction grows, but chunks begin to be
+dropped at budget 5000 — the **eviction boundary** — so recall@10 stops reflecting
+what the agent sees, and the safety claim becomes **parse-validity + chunks_dropped**,
+not recall. Which budget to ship — and whether the re-read cost nets out — is deferred
+to Stage 3, where end-to-end success rate can weigh the coverage/token tradeoff. Full
+per-budget report: [`bench/results/stage2.md`](bench/results/stage2.md).
+
+### Reproduce
+
+```sh
+# same pinned checkout as Stage 1; reuses the cached index (no re-embedding)
+VOYAGE_API_KEY=… COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
+  go test -tags eval ./bench/ -run Skeleton -v -timeout 30m
+```
+
 ## Layout
 
 ```
@@ -75,16 +122,17 @@ internal/parse/      tree-sitter parsing (ported, Apache-2.0)
 internal/chunk/      cAST AST chunker (Stage 1)
 internal/embed/      Embedder: Voyage / OpenAI-compatible / Fake (Stage 1)
 internal/index/      file watcher + SQLite vector store + retriever (Stage 1)
-internal/skeleton/   skeleton-first compression (Stage 2 — planned)
+internal/skeleton/   skeleton-first compression (Stage 2)
 internal/compress/   history compression (Stage 3 — planned)
 bench/               frozen task set + gated eval + results
 ```
 
 ## Status
 
-**Stage 1 (cAST retrieval) is shipped and measured** — see the baseline above.
-Stage 2 (skeleton-first compression) is next: hold recall@10 while cutting the
-`retrieved_code` token count, measured on the same frozen set.
+**Stages 1 (cAST retrieval) and 2 (skeleton-first compression) are shipped and
+measured** — see the baselines above. Stage 3 (ACON-style history compression) is
+next; it is also where the Stage 2 assembly budget gets pinned, against end-to-end
+success rate rather than token count alone.
 
 ## License
 
