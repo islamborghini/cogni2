@@ -102,28 +102,38 @@ func NewReadFileTool(root string, maxLines int) Tool {
 
 func (t *readFileTool) Spec() ToolSpec {
 	return ToolSpec{
-		Name:        ToolReadFile,
-		Description: "Read a span of lines from a source file (1-based, inclusive). Use the path:start-end anchors from search_code results.",
+		Name: ToolReadFile,
+		Description: "Read a span of lines from a source file (1-based, inclusive). Use the path:start-end " +
+			"anchors from search_code results. Only path is required; omit the range to read from the top.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path":  map[string]any{"type": "string", "description": "repo-relative file path"},
-				"start": map[string]any{"type": "integer", "description": "1-based start line"},
-				"end":   map[string]any{"type": "integer", "description": "1-based end line (inclusive)"},
+				"start": map[string]any{"type": "integer", "description": "1-based start line (aliases: start_line, line_start)"},
+				"end":   map[string]any{"type": "integer", "description": "1-based end line, inclusive (aliases: end_line, line_end)"},
 			},
-			"required": []string{"path", "start", "end"},
+			"required": []string{"path"},
 		},
 	}
 }
 
 func (t *readFileTool) Call(_ context.Context, args string) (string, string, error) {
+	// Accept the common line-range aliases models reach for; only path is required
+	// in the schema, so a misnamed range no longer fails provider-side validation.
 	var a struct {
-		Path  string `json:"path"`
-		Start int    `json:"start"`
-		End   int    `json:"end"`
+		Path      string `json:"path"`
+		Start     int    `json:"start"`
+		End       int    `json:"end"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+		LineStart int    `json:"line_start"`
+		LineEnd   int    `json:"line_end"`
 	}
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return "", "", fmt.Errorf("read_file: bad args: %w", err)
+	}
+	if strings.TrimSpace(a.Path) == "" {
+		return "", "", fmt.Errorf("read_file: missing path")
 	}
 	clean := filepath.Clean(a.Path)
 	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
@@ -134,14 +144,17 @@ func (t *readFileTool) Call(_ context.Context, args string) (string, string, err
 		return "", "", fmt.Errorf("read_file: %w", err)
 	}
 	lines := strings.Split(string(data), "\n")
-	start := a.Start
+	start := firstPositive(a.Start, a.StartLine, a.LineStart)
 	if start < 1 {
 		start = 1
 	}
 	if start > len(lines) {
 		return "", "", fmt.Errorf("read_file: start %d is past EOF (%d lines)", start, len(lines))
 	}
-	end := a.End
+	end := firstPositive(a.End, a.EndLine, a.LineEnd)
+	if end <= 0 {
+		end = start + t.maxLines - 1 // no range given: read a capped window from start
+	}
 	if end > len(lines) {
 		end = len(lines)
 	}
@@ -210,4 +223,14 @@ func parseLocations(args string) ([]Location, error) {
 		return nil, fmt.Errorf("submit_answer: no locations provided")
 	}
 	return a.Locations, nil
+}
+
+// firstPositive returns the first value greater than zero, or 0 if none are.
+func firstPositive(vals ...int) int {
+	for _, v := range vals {
+		if v > 0 {
+			return v
+		}
+	}
+	return 0
 }

@@ -26,7 +26,10 @@ Tools:
   that answer the question.
 
 Work in small steps: search, read only what you need, then submit. Prefer the
-fewest tool calls that let you answer confidently.`
+fewest tool calls that let you answer confidently.
+
+You MUST finish by calling submit_answer with the location(s) — do not write the
+final answer as plain text. An answer not submitted via submit_answer does not count.`
 
 // The chat client can drive the compressor too.
 var _ compress.Summarizer = (*OpenAIChat)(nil)
