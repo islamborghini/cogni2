@@ -68,6 +68,34 @@ func TestReadFileTool(t *testing.T) {
 	}
 }
 
+func TestReadFileAcceptsAliasesAndPathOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.py"), []byte("l1\nl2\nl3\nl4\nl5"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewReadFileTool(dir, 400)
+
+	// line_start/line_end and start_line/end_line must work like start/end.
+	for _, args := range []string{
+		`{"path":"x.py","line_start":2,"line_end":4}`,
+		`{"path":"x.py","start_line":2,"end_line":4}`,
+	} {
+		res, _, err := tool.Call(context.Background(), args)
+		if err != nil {
+			t.Fatalf("call %s: %v", args, err)
+		}
+		if !strings.Contains(res, "x.py:2-4") || !strings.Contains(res, "2: l2") {
+			t.Errorf("alias args %s gave wrong span:\n%s", args, res)
+		}
+	}
+
+	// Path only: read a capped window from the top, no error.
+	res, _, err := tool.Call(context.Background(), `{"path":"x.py"}`)
+	if err != nil || !strings.Contains(res, "1: l1") {
+		t.Errorf("path-only read = (%q, %v), want a top-of-file window", res, err)
+	}
+}
+
 func TestParseLocations(t *testing.T) {
 	locs, err := parseLocations(`{"locations":[{"path":"a.py","start":1,"end":3},{"path":"b.py","start":5,"end":9}]}`)
 	if err != nil || len(locs) != 2 || locs[1].Path != "b.py" || locs[1].End != 9 {

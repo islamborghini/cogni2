@@ -191,13 +191,7 @@ func runOrLoad(t *testing.T, ctx context.Context, p runParams) RunRecord {
 		Model: p.chat, Tools: p.tools, System: agent.DefaultSystemPrompt,
 		MaxTurns: p.maxTurns, Tok: p.tok, Compressor: comp, HistoryBudget: p.budget,
 	}
-	out, transcript, ledger, err := agent.Run(ctx, agent.RunInput{ID: p.task.ID, Query: p.task.Query}, deps)
-	if err != nil {
-		t.Fatalf("run %s / %s: %v", p.arm, p.task.ID, err)
-	}
-
-	recall := Recall(p.task.Gold, locationsToChunks(out.Locations))
-	localization := p.task.Bucket == Localization
+	out, transcript, ledger, runErr := agent.Run(ctx, agent.RunInput{ID: p.task.ID, Query: p.task.Query}, deps)
 
 	buckets := map[string]int{}
 	var prompt, cached, completion int
@@ -217,13 +211,25 @@ func runOrLoad(t *testing.T, ctx context.Context, p runParams) RunRecord {
 		buckets[BucketCompression] += ms.InputTokens + ms.OutputTokens
 	}
 
+	recall := Recall(p.task.Gold, locationsToChunks(out.Locations))
+	localization := p.task.Bucket == Localization
 	tr := stage3Trajectory{
 		TaskID: p.task.ID, Arm: p.arm, Budget: p.budget, Repeat: p.repeat, Query: p.task.Query,
-		Localization: localization, Success: localization && recall >= 1.0, Recall: recall,
+		Localization: localization, Success: runErr == nil && localization && recall >= 1.0, Recall: recall,
 		StopReason: out.StopReason, Turns: out.Turns, Buckets: buckets,
 		PromptTokens: prompt, CachedTokens: cached, CompletionTokens: completion,
 		Summarized: out.Summarized, Dropped: out.Dropped,
 		Locations: out.Locations, Messages: transcript.Messages,
+	}
+
+	// A hard run error (e.g. the model can't produce a valid tool call after the
+	// client's retries) is recorded as a FAILED task, not a fatal abort — one bad
+	// task must not kill a long, rate-limited run. It is NOT persisted, so a re-run
+	// retries it rather than caching the failure.
+	if runErr != nil {
+		tr.StopReason = "error"
+		t.Logf("ERROR %s / %s r%d (not cached, will retry on re-run): %v", p.arm, p.task.ID, p.repeat, runErr)
+		return trajToRecord(tr)
 	}
 	if err := writeJSON(path, tr); err != nil {
 		t.Fatalf("persist trajectory %s: %v", path, err)
