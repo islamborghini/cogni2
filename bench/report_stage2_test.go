@@ -1,8 +1,13 @@
 package bench
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/islamborghini/cogni2/internal/meter"
 )
 
 func TestRenderMarkdownStage2(t *testing.T) {
@@ -43,5 +48,39 @@ func TestStage2DropBoundary(t *testing.T) {
 	none := Stage2Result{Rows: []BudgetRow{{Budget: 6000, ChunksDropped: 0}}}
 	if got := none.DropBoundaryBudget(); got != 0 {
 		t.Errorf("DropBoundaryBudget (no drops) = %d, want 0", got)
+	}
+}
+
+func TestLoadStage1Tokens(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "bench", "runs", "stage1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := meter.Record{
+		TaskID:  "alpha",
+		Stage:   1,
+		Buckets: map[string]int{meter.BucketRetrievedCode: 1234},
+		Total:   1234,
+	}
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "alpha.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadStage1Tokens(root)
+	if err != nil {
+		t.Fatalf("loadStage1Tokens: %v", err)
+	}
+	if got["alpha"] != 1234 {
+		t.Errorf("alpha retrieved_code tokens = %d, want 1234", got["alpha"])
+	}
+
+	// A missing runs directory is an error (Stage 1 not yet run), not a panic.
+	if _, err := loadStage1Tokens(t.TempDir()); err == nil {
+		t.Error("expected an error when the stage1 runs dir is absent")
 	}
 }
