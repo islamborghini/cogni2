@@ -33,6 +33,11 @@ const (
 	maxToolUseRetries = 3
 )
 
+// ErrUnauthorized is returned (wrapped) when the provider rejects the API key
+// (HTTP 401/403). It is a global config failure, not a per-task one, so the eval
+// aborts on it rather than recording a doomed call for every task.
+var ErrUnauthorized = errors.New("agent: unauthorized — check LLM_API_KEY/GROQ_API_KEY")
+
 // OpenAIChat is a provider-agnostic OpenAI-compatible chat-completions client. It
 // implements both Model (the agent) and compress.Summarizer (the compressor), so
 // the same type — pointed at different models — backs both roles.
@@ -261,6 +266,10 @@ func (c *OpenAIChat) do(ctx context.Context, path string, reqBody any) ([]byte, 
 			}
 			lastErr = fmt.Errorf("agent: tool_use_failed (try %d): %s", toolFails, snippet(respBody))
 			delay = chatBackoff(base, toolFails-1)
+
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+			// A bad key won't fix itself across retries or tasks — fail fast and typed.
+			return nil, fmt.Errorf("%w: %s: %s", ErrUnauthorized, resp.Status, snippet(respBody))
 
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("agent: %s: %s", resp.Status, snippet(respBody))

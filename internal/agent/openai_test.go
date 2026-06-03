@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,6 +99,25 @@ func TestOpenAIChatRetriesToolUseFailed(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&calls); n != 2 {
 		t.Errorf("server calls = %d, want 2 (one tool_use_failed then success)", n)
+	}
+}
+
+func TestOpenAIChatUnauthorizedIsTyped(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"Invalid API Key","code":"invalid_api_key"}}`)
+	}))
+	defer srv.Close()
+
+	c := &OpenAIChat{BaseURL: srv.URL, APIKey: "bad", Model: "m", Client: srv.Client(), retryBase: time.Millisecond}
+	_, err := c.Generate(context.Background(), Request{Messages: []ChatMessage{{Role: RoleUser, Content: "hi"}}})
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("401 error = %v, want errors.Is ErrUnauthorized", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("server calls = %d, want 1 (auth failure must not retry)", n)
 	}
 }
 
