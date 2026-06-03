@@ -38,6 +38,11 @@ type Turn struct {
 	Content string
 	Step    int
 	Kind    string
+	// Compressed marks an observation that has already been summarized in a prior
+	// step. The agent carries this back across turns so each observation is
+	// summarized at most once — compression is incremental, not re-run over the
+	// whole history every step (which is O(turns²) summarizer cost).
+	Compressed bool
 }
 
 // Summarizer condenses text under a natural-language instruction. It is the one
@@ -86,43 +91,45 @@ type GuidelineCompressor struct {
 
 var _ Compressor = (*GuidelineCompressor)(nil)
 
-// Compress condenses history to roughly budget tokens. It never mutates the goal
-// (the first user turn) or the most recent action+observation (the last assistant
-// turn through the end). budget <= 0 disables the drop pass (summarize only).
+// Compress condenses history to fit budget tokens. It only acts when the history
+// exceeds the budget (nothing to save otherwise), summarizes the oldest not-yet-
+// compressed observations one at a time until it fits, then drops the oldest if it
+// still doesn't. The goal (first user turn) and the most recent action+observation
+// are never touched. A no-op (budget <= 0, no tokenizer, or already under budget)
+// makes no summarizer calls — the key fix that keeps overhead from dwarfing the
+// savings.
 func (c *GuidelineCompressor) Compress(ctx context.Context, history []Turn, budget int) (Result, error) {
 	out := make([]Turn, len(history))
 	copy(out, history)
 	res := Result{History: out}
-	if len(out) == 0 {
+	if len(out) == 0 || c.Tok == nil || budget <= 0 || c.total(out) <= budget {
 		return res, nil
 	}
 
 	protected := protectedMask(out)
 
-	// Pass 1 — summarize older observations under the guideline.
-	for i := range out {
-		if protected[i] || out[i].Role != RoleTool {
-			continue
-		}
-		if c.Tok != nil && c.MinSummarizeTokens > 0 && c.Tok.Count(out[i].Content) <= c.MinSummarizeTokens {
-			continue
+	// Summarize the oldest not-yet-compressed observations until the history fits.
+	// Marking each Compressed (even if the summary didn't shrink it) means it is
+	// never summarized again on a later step.
+	for c.total(out) > budget {
+		i := oldestSummarizable(out, protected, c.Tok, c.MinSummarizeTokens)
+		if i < 0 {
+			break
 		}
 		summary, err := c.Summarizer.Summarize(ctx, out[i].Content, c.Guideline)
 		if err != nil {
 			return Result{}, fmt.Errorf("compress: summarize step %d: %w", out[i].Step, err)
 		}
-		// Only accept a summary that actually shrinks the observation; a summarizer
-		// that expands the text helps nobody.
-		if c.Tok == nil || c.Tok.Count(summary) < c.Tok.Count(out[i].Content) {
+		out[i].Compressed = true
+		if c.Tok.Count(summary) < c.Tok.Count(out[i].Content) {
 			out[i].Content = summary
 			res.Summarized++
 		}
 	}
 
-	// Pass 2 — if still over budget, drop the oldest summarized observations first.
-	// The protected region (goal + most recent pair) is never dropped, so the budget
-	// is advisory: if it alone exceeds the budget we stop rather than break it.
-	for c.Tok != nil && budget > 0 && c.total(out) > budget {
+	// If summarizing everything still didn't fit, drop the oldest observations.
+	// The protected region is never dropped, so the budget stays advisory.
+	for c.total(out) > budget {
 		idx := oldestDroppable(out, protected)
 		if idx < 0 {
 			break
@@ -131,6 +138,22 @@ func (c *GuidelineCompressor) Compress(ctx context.Context, history []Turn, budg
 		res.Dropped++
 	}
 	return res, nil
+}
+
+// oldestSummarizable returns the earliest observation eligible to be summarized:
+// a non-protected tool turn, not already compressed, not already the drop marker,
+// and (if MinSummarizeTokens is set) larger than that floor.
+func oldestSummarizable(turns []Turn, protected []bool, tok Tokenizer, minTokens int) int {
+	for i := range turns {
+		if protected[i] || turns[i].Role != RoleTool || turns[i].Compressed || turns[i].Content == dropMarker {
+			continue
+		}
+		if minTokens > 0 && tok != nil && tok.Count(turns[i].Content) <= minTokens {
+			continue
+		}
+		return i
+	}
+	return -1
 }
 
 // total is the token count of the whole history under the configured tokenizer.
