@@ -36,6 +36,9 @@ type ChatMessage struct {
 	ToolCalls  []ToolCall
 	ToolCallID string
 	Origin     string
+	// Compressed marks an observation the compressor has already summarized, so it
+	// is not summarized again on later turns (incremental compression).
+	Compressed bool
 }
 
 // ToolSpec is a function tool advertised to the model; it is serialized as each

@@ -218,14 +218,17 @@ func toolsSpecText(specs []ToolSpec) string {
 func compressMessages(ctx context.Context, deps Deps, msgs []ChatMessage) (summarized, dropped int, err error) {
 	turns := make([]compress.Turn, len(msgs))
 	for i, m := range msgs {
-		turns[i] = compress.Turn{Role: m.Role, Content: m.Content, Step: i, Kind: m.Origin}
+		turns[i] = compress.Turn{Role: m.Role, Content: m.Content, Step: i, Kind: m.Origin, Compressed: m.Compressed}
 	}
 	res, err := deps.Compressor.Compress(ctx, turns, deps.HistoryBudget)
 	if err != nil {
 		return 0, 0, err
 	}
+	// Carry back both the (possibly summarized) content and the Compressed flag so
+	// the same observation is never summarized twice across turns.
 	for i := range res.History {
 		msgs[i].Content = res.History[i].Content
+		msgs[i].Compressed = res.History[i].Compressed
 	}
 	return res.Summarized, res.Dropped, nil
 }

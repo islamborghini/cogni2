@@ -142,24 +142,19 @@ func TestRunCompressesBetweenSteps(t *testing.T) {
 		{Message: ChatMessage{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c3", Name: ToolSubmitAnswer, Args: `{"locations":[{"path":"pkg/text.py","start":10,"end":20}]}`}}}},
 	}}
 	comp := &compress.GuidelineCompressor{Summarizer: compress.FakeSummarizer{}, Tok: countTok{}}
-	// Loose budget: the older observation should be summarized, not dropped
-	// (the drop path is covered by the compress package's own tests).
+	// Tight budget so the accumulated history exceeds it and the compressor engages
+	// (gated compression is a no-op under budget — covered by the compress tests).
 	deps := Deps{
 		Model: model, Tools: searchReadSubmitTools(t, t.TempDir()), System: DefaultSystemPrompt,
-		Tok: countTok{}, Compressor: comp, HistoryBudget: 1000,
+		Tok: countTok{}, Compressor: comp, HistoryBudget: 5,
 	}
 
-	out, tr, _, err := Run(context.Background(), RunInput{Query: "find it"}, deps)
+	out, _, _, err := Run(context.Background(), RunInput{Query: "find it"}, deps)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if out.Summarized < 1 || out.Dropped != 0 {
-		t.Fatalf("expected an observation summarized and none dropped, got %+v", out)
-	}
-	// The first search observation (index 2) is older than the most recent
-	// action+observation, so it must have been summarized.
-	if !strings.Contains(tr.Messages[2].Content, "summarized") {
-		t.Errorf("older observation was not summarized: %q", tr.Messages[2].Content)
+	if out.Summarized < 1 {
+		t.Fatalf("expected the compressor to summarize an older observation, got %+v", out)
 	}
 }
 

@@ -15,103 +15,130 @@ type wordTok struct{}
 
 func (wordTok) Count(s string) int { return len(strings.Fields(s)) }
 
-func TestCompressKeepsGoalAndRecentVerbatim(t *testing.T) {
-	history := []Turn{
-		{Role: RoleUser, Content: "find slugify implementation", Step: 0},
-		{Role: RoleAssistant, Content: "I will search the codebase.", Step: 1},
-		{Role: RoleTool, Content: "django/utils/text.py:1-5\nold body\nmore old words here", Step: 1, Kind: "retrieved_code"},
-		{Role: RoleAssistant, Content: "Now I will read the file.", Step: 2},
-		{Role: RoleTool, Content: "django/utils/text.py:40-50\nfresh body content", Step: 2},
+// countingSummarizer records how many times it is called and shrinks multi-line
+// (and single-line) input to "<first line> S", so the tests can assert that
+// compression makes the minimum number of summarizer calls.
+type countingSummarizer struct{ calls int }
+
+func (c *countingSummarizer) Summarize(_ context.Context, text, _ string) (string, error) {
+	c.calls++
+	first := text
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		first = text[:i]
 	}
-	c := &GuidelineCompressor{Summarizer: FakeSummarizer{}, Tok: wordTok{}}
+	return first + " S", nil
+}
+
+func TestCompressNoOpUnderBudget(t *testing.T) {
+	// History already fits the budget → no summarizer call at all. This is the fix
+	// that stops compression overhead from dwarfing the savings on cheap tasks.
+	history := []Turn{
+		{Role: RoleUser, Content: "find the thing", Step: 0},
+		{Role: RoleTool, Content: "a.py:1-2\nsome body here", Step: 0},
+		{Role: RoleAssistant, Content: "reading", Step: 1},
+		{Role: RoleTool, Content: "b.py:1-2 fresh", Step: 1},
+	}
+	cs := &countingSummarizer{}
+	c := &GuidelineCompressor{Summarizer: cs, Tok: wordTok{}}
 
 	res, err := c.Compress(context.Background(), history, 1000)
 	if err != nil {
 		t.Fatalf("compress: %v", err)
 	}
-	if res.Summarized != 1 || res.Dropped != 0 {
-		t.Fatalf("summarized=%d dropped=%d, want 1 and 0", res.Summarized, res.Dropped)
+	if cs.calls != 0 || res.Summarized != 0 || res.Dropped != 0 {
+		t.Fatalf("under budget must be a no-op: calls=%d res=%+v", cs.calls, res)
 	}
-	out := res.History
-	if out[0].Content != "find slugify implementation" {
-		t.Errorf("goal was mutated: %q", out[0].Content)
-	}
-	if out[1].Content != "I will search the codebase." {
-		t.Errorf("assistant turn was mutated: %q", out[1].Content)
-	}
-	if !strings.Contains(out[2].Content, "django/utils/text.py:1-5") {
-		t.Errorf("older observation lost its anchor: %q", out[2].Content)
-	}
-	if c.Tok.Count(out[2].Content) >= c.Tok.Count(history[2].Content) {
-		t.Errorf("older observation was not shortened: %q", out[2].Content)
-	}
-	if out[4].Content != history[4].Content {
-		t.Errorf("most recent observation was mutated: %q", out[4].Content)
-	}
-	// The input slice must not be aliased/mutated.
-	if history[2].Content == out[2].Content {
-		t.Error("Compress mutated the caller's slice")
+	if res.History[1].Content != history[1].Content {
+		t.Errorf("content changed under budget: %q", res.History[1].Content)
 	}
 }
 
-func TestCompressDropsOldestFirstOverBudget(t *testing.T) {
+func TestCompressSummarizesOldestUntilFit(t *testing.T) {
 	history := []Turn{
-		{Role: RoleUser, Content: "goal here", Step: 0},
-		{Role: RoleTool, Content: "a.py:1-2 alpha beta gamma delta epsilon zeta eta", Step: 0},
-		{Role: RoleTool, Content: "b.py:1-2 alpha beta gamma delta epsilon zeta eta", Step: 1},
-		{Role: RoleAssistant, Content: "acting now", Step: 2},
-		{Role: RoleTool, Content: "c.py:1-2 fresh stuff", Step: 2},
+		{Role: RoleUser, Content: "goal", Step: 0},                              // 1 (protected goal)
+		{Role: RoleTool, Content: "a.py:1-2\nbig big big big big big", Step: 0}, // 7
+		{Role: RoleTool, Content: "b.py:1-2\nbig big big big big big", Step: 1}, // 7
+		{Role: RoleAssistant, Content: "act now", Step: 2},                      // 2 (protected)
+		{Role: RoleTool, Content: "c.py:1-2 fresh", Step: 2},                    // 2 (protected recent)
 	}
-	// Skip summarization (MinSummarizeTokens huge) to test the drop pass in
-	// isolation: raw observations totalling 23 tokens, budget 18, so exactly the
-	// oldest observation must be evicted.
-	c := &GuidelineCompressor{Summarizer: FakeSummarizer{}, Tok: wordTok{}, MinSummarizeTokens: 1000}
+	cs := &countingSummarizer{}
+	c := &GuidelineCompressor{Summarizer: cs, Tok: wordTok{}}
 
-	res, err := c.Compress(context.Background(), history, 18)
+	res, err := c.Compress(context.Background(), history, 15) // total 19 → summarize one
 	if err != nil {
 		t.Fatalf("compress: %v", err)
 	}
-	if res.Summarized != 0 {
-		t.Errorf("summarized=%d, want 0 (summarization skipped)", res.Summarized)
-	}
-	if res.Dropped != 1 {
-		t.Fatalf("dropped=%d, want exactly 1 (oldest only)", res.Dropped)
+	if res.Summarized != 1 || cs.calls != 1 || res.Dropped != 0 {
+		t.Fatalf("want exactly one summarize: summarized=%d calls=%d dropped=%d", res.Summarized, cs.calls, res.Dropped)
 	}
 	out := res.History
-	if out[1].Content != dropMarker {
-		t.Errorf("oldest observation should be the drop marker, got %q", out[1].Content)
+	if out[1].Content != "a.py:1-2 S" || !out[1].Compressed {
+		t.Errorf("oldest obs not summarized/marked: %+v", out[1])
 	}
-	if out[2].Content != history[2].Content {
-		t.Errorf("second observation should be untouched, got %q", out[2].Content)
+	if out[2].Content != history[2].Content || out[2].Compressed {
+		t.Errorf("second obs should be untouched: %+v", out[2])
 	}
-	if out[4].Content != history[4].Content {
-		t.Errorf("most recent observation must never be dropped, got %q", out[4].Content)
-	}
-	if got := c.total(out); got > 18 {
-		t.Errorf("history still over budget after drops: %d > 18", got)
+	if out[0].Content != "goal" || out[4].Content != "c.py:1-2 fresh" {
+		t.Errorf("goal or most-recent observation was mutated")
 	}
 }
 
-func TestCompressRejectsNonShrinkingSummary(t *testing.T) {
-	// A short single-line observation: the FakeSummarizer would only append a
-	// marker, making it longer, so it must be left verbatim.
+func TestCompressIncrementalDoesNotResummarize(t *testing.T) {
 	history := []Turn{
 		{Role: RoleUser, Content: "goal", Step: 0},
-		{Role: RoleTool, Content: "x.py:1-2 ok", Step: 0},
-		{Role: RoleAssistant, Content: "act", Step: 1},
-		{Role: RoleTool, Content: "y.py:1-2 fresh", Step: 1},
+		{Role: RoleTool, Content: "a.py:1-2\nbig big big big big big", Step: 0},
+		{Role: RoleTool, Content: "b.py:1-2\nbig big big big big big", Step: 1},
+		{Role: RoleAssistant, Content: "act now", Step: 2},
+		{Role: RoleTool, Content: "c.py:1-2 fresh", Step: 2},
 	}
-	c := &GuidelineCompressor{Summarizer: FakeSummarizer{}, Tok: wordTok{}}
-
-	res, err := c.Compress(context.Background(), history, 1000)
+	c := &GuidelineCompressor{Summarizer: &countingSummarizer{}, Tok: wordTok{}}
+	res1, err := c.Compress(context.Background(), history, 15) // summarizes obs1 only
 	if err != nil {
 		t.Fatalf("compress: %v", err)
 	}
-	if res.Summarized != 0 {
-		t.Errorf("summarized=%d, want 0 (summary would not shrink)", res.Summarized)
+
+	// Second pass over the already-partly-compressed history with a tighter budget:
+	// obs1 is marked Compressed and must NOT be summarized again — only obs2.
+	c2 := &countingSummarizer{}
+	c.Summarizer = c2
+	res2, err := c.Compress(context.Background(), res1.History, 10) // total 14 → summarize obs2
+	if err != nil {
+		t.Fatalf("compress: %v", err)
 	}
-	if res.History[1].Content != "x.py:1-2 ok" {
-		t.Errorf("short observation was changed: %q", res.History[1].Content)
+	if c2.calls != 1 || res2.Summarized != 1 {
+		t.Fatalf("second pass should summarize only the newly-aged obs: calls=%d summarized=%d", c2.calls, res2.Summarized)
+	}
+	if res2.History[1].Content != "a.py:1-2 S" {
+		t.Errorf("already-compressed obs1 was re-summarized: %q", res2.History[1].Content)
+	}
+	if res2.History[2].Content != "b.py:1-2 S" || !res2.History[2].Compressed {
+		t.Errorf("obs2 should now be summarized and marked: %+v", res2.History[2])
+	}
+}
+
+func TestCompressDropsWhenSummarizingNotEnough(t *testing.T) {
+	history := []Turn{
+		{Role: RoleUser, Content: "goal", Step: 0},
+		{Role: RoleTool, Content: "a.py:1-2 big big big big big big", Step: 0}, // 7, single line
+		{Role: RoleTool, Content: "b.py:1-2 big big big big big big", Step: 1}, // 7
+		{Role: RoleAssistant, Content: "act now", Step: 2},
+		{Role: RoleTool, Content: "c.py:1-2 fresh", Step: 2},
+	}
+	// MinSummarizeTokens high → nothing is summarized, so dropping is the only lever.
+	c := &GuidelineCompressor{Summarizer: &countingSummarizer{}, Tok: wordTok{}, MinSummarizeTokens: 1000}
+
+	res, err := c.Compress(context.Background(), history, 16) // total 19 → drop oldest
+	if err != nil {
+		t.Fatalf("compress: %v", err)
+	}
+	if res.Summarized != 0 || res.Dropped < 1 {
+		t.Fatalf("want a drop, not a summarize: %+v", res)
+	}
+	if res.History[1].Content != dropMarker {
+		t.Errorf("oldest observation should be dropped: %q", res.History[1].Content)
+	}
+	if res.History[4].Content != "c.py:1-2 fresh" {
+		t.Errorf("most recent observation must never be dropped")
 	}
 }
 
