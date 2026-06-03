@@ -25,6 +25,7 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -228,6 +229,11 @@ func runOrLoad(t *testing.T, ctx context.Context, p runParams) RunRecord {
 	// task must not kill a long, rate-limited run. It is NOT persisted, so a re-run
 	// retries it rather than caching the failure.
 	if runErr != nil {
+		// A bad API key fails every task — abort with one clear message instead of
+		// logging 40 doomed runs and printing a misleading success=0 summary.
+		if errors.Is(runErr, agent.ErrUnauthorized) {
+			t.Fatalf("%v — fix the key and re-run (cached tasks resume; nothing was wasted)", runErr)
+		}
 		tr.StopReason = "error"
 		t.Logf("ERROR %s / %s r%d (not cached, will retry on re-run): %v", p.arm, p.task.ID, p.repeat, runErr)
 		return trajToRecord(tr)
