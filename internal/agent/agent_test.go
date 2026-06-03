@@ -86,6 +86,23 @@ func TestRunSubmitsAnswer(t *testing.T) {
 	}
 }
 
+func TestRunAcceptsCommentaryAsSubmit(t *testing.T) {
+	// gpt-oss sometimes names its final submit call "commentary" — the loop must
+	// treat it as submit_answer and capture the locations.
+	model := &FakeModel{Responses: []Response{
+		{Message: ChatMessage{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: "commentary", Args: `{"locations":[{"path":"pkg/text.py","start":10,"end":20}]}`}}}},
+	}}
+	deps := Deps{Model: model, Tools: searchReadSubmitTools(t, t.TempDir()), System: DefaultSystemPrompt, Tok: countTok{}}
+
+	out, _, _, err := Run(context.Background(), RunInput{Query: "find it"}, deps)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !out.Answered || out.StopReason != "submitted" || len(out.Locations) != 1 {
+		t.Fatalf("commentary call not treated as submit: %+v", out)
+	}
+}
+
 func TestRunHitsMaxTurns(t *testing.T) {
 	model := &FakeModel{Responses: []Response{
 		{Message: ChatMessage{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "c1", Name: ToolSearchCode, Args: `{"query":"x"}`}}}},

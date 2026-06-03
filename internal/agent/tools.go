@@ -175,17 +175,43 @@ func (t *readFileTool) Call(_ context.Context, args string) (string, string, err
 
 // --- submit_answer: ends the task; the loop reads the locations ---
 
-type submitAnswerTool struct{}
+// submitAliasCommentary is a second name the loop treats as submit_answer:
+// gpt-oss on Groq sometimes emits its internal "commentary" channel as the
+// function name on its final call (with valid submit arguments). Advertising it
+// (NewSubmitAliasTool) lets the provider accept the call instead of 400ing.
+const submitAliasCommentary = "commentary"
+
+// IsSubmitTool reports whether a tool name should finish the task as submit_answer.
+func IsSubmitTool(name string) bool {
+	return name == ToolSubmitAnswer || name == submitAliasCommentary
+}
+
+type submitAnswerTool struct {
+	name string
+	desc string
+}
 
 // NewSubmitAnswerTool returns the tool that finishes a task. The loop special-
-// cases its name to capture the answer; Call itself only acknowledges.
-func NewSubmitAnswerTool() Tool { return submitAnswerTool{} }
-
-func (submitAnswerTool) Spec() ToolSpec {
-	return ToolSpec{
-		Name: ToolSubmitAnswer,
-		Description: "Submit the final answer: the code location(s) that answer the query, " +
+// cases it (see IsSubmitTool) to capture the answer; Call itself only acknowledges.
+func NewSubmitAnswerTool() Tool {
+	return submitAnswerTool{
+		name: ToolSubmitAnswer,
+		desc: "Submit the final answer: the code location(s) that answer the query, " +
 			"as a list of {path, start, end}. Call this once you are confident.",
+	}
+}
+
+// NewSubmitAliasTool advertises an extra name (e.g. "commentary") that the loop
+// also treats as submit_answer — a compatibility shim for models that emit a
+// channel name as the final function name.
+func NewSubmitAliasTool(name string) Tool {
+	return submitAnswerTool{name: name, desc: "Compatibility alias for submit_answer — identical arguments and effect."}
+}
+
+func (s submitAnswerTool) Spec() ToolSpec {
+	return ToolSpec{
+		Name:        s.name,
+		Description: s.desc,
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
