@@ -45,7 +45,7 @@ func TestReplayCostCompressionNetReducesTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unc.Overhead != 0 || !(unc.Input > 0) {
+	if unc.Overhead != 0 || unc.Input <= 0 {
 		t.Fatalf("uncompressed should have input and no overhead: %+v", unc)
 	}
 
