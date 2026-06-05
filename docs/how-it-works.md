@@ -1,52 +1,50 @@
 # How Cogni Works
 
-Modern coding assistants, the kind that read your repository and write fixes for you, run on large language models. Every time the assistant thinks, it sends a slice of your code and its own running notes to the model, and you pay for every word it sends. The longer a task runs, the more the assistant piles up: files it has read, search results it has gathered, and the back and forth of its own reasoning. That pile gets sent again on every step, and the bill grows with it.
+Coding agents spend tokens at a brutal rate. On every step the agent re-sends its working context to the model: the code it has pulled in, the tool outputs it has collected, and the transcript of its own reasoning. That context only grows as a task runs, and you pay for the whole thing on every turn. For a multi-step task, the same code and the same notes get billed again and again.
 
-Cogni is a thin layer that sits between the coding assistant and the model. Its job is simple to state and hard to do well: send the model less, without making the assistant any worse at finishing the job. We do this in three steps, and we measure each step on its own so we always know which part is pulling its weight. The rule we hold ourselves to is strict. A change only counts as a win if the assistant still succeeds just as often. Saving words by giving worse answers is not progress.
-
-Here are the three steps. At a glance, the assistant sends a large and growing amount of context on every step, and Cogni shrinks it in three ways before it reaches the model.
+Cogni is a context layer that sits between the agent and the model API. The goal is narrow and measurable: cut the tokens spent per task without lowering how often the agent actually completes it. We do that in three independent steps, and we measure each one in isolation so we always know which part is carrying the result. The bar is fixed up front. A reduction only counts if success holds. Spending fewer tokens by returning worse answers is not a win.
 
 ```mermaid
 flowchart LR
-    A["Coding<br/>assistant"]
-    A -->|"full code and<br/>growing notes"| C
+    A["Coding<br/>agent"]
+    A -->|"full code and<br/>growing history"| C
     subgraph C [The Cogni layer]
       direction TB
-      S1["Step 1<br/>Find only the<br/>relevant code"]
-      S2["Step 2<br/>Send outlines,<br/>not full bodies"]
-      S3["Step 3<br/>Keep the running<br/>notes short"]
+      S1["Step 1<br/>Retrieve only<br/>the relevant code"]
+      S2["Step 2<br/>Send signatures,<br/>not full bodies"]
+      S3["Step 3<br/>Compress the<br/>running history"]
       S1 --> S2 --> S3
     end
-    C -->|"much less text,<br/>same answer"| M["Language<br/>model"]
+    C -->|"far fewer tokens,<br/>same answer"| M["Language<br/>model"]
     M -->|"answer"| A
 ```
 
-## Step one: find only the code that matters
+## Step one: retrieve only the relevant code
 
-When an assistant needs to understand part of a codebase, the lazy approach is to hand it whole files, or even whole folders. Most of that text is irrelevant to the task at hand, and all of it costs money to send.
+The naive way to give an agent context is to paste in whole files, or to let it grep and read until it stumbles onto what it needs. Both approaches push a large amount of irrelevant text through the context window, and you pay for all of it.
 
-Cogni takes a smarter route. Ahead of time, it reads the repository and splits it into clean, meaningful pieces: a single function here, a method there, the outline of a class somewhere else. It splits along the natural seams of the code rather than chopping at arbitrary line counts, so each piece is something a developer would recognize as a unit. It then turns each piece into a numerical fingerprint that captures its meaning, and stores all of these fingerprints in a small local database.
+Cogni indexes the repository ahead of time. It splits each file along abstract syntax tree boundaries rather than fixed line counts, so every chunk is a coherent unit: a function, a method, or a class header with its signatures. It embeds each chunk and stores the vectors in a local database. At query time it embeds the task description and returns the top handful of chunks by cosine similarity.
 
-When a task arrives, Cogni turns the request into the same kind of fingerprint and looks up the handful of code pieces whose meaning sits closest to it. Instead of a whole file, the assistant receives just the few functions that actually relate to the question. On our benchmark this locates the right code for the answer in the large majority of cases, while sending only a small fraction of the text a naive approach would.
+The agent receives a few targeted definitions instead of whole files. On our benchmark this surfaces the correct location for the answer in the large majority of cases while sending a fraction of the tokens a file-level approach would. This retrieval floor is the baseline every later step is measured against.
 
-## Step two: send outlines, not full bodies
+## Step two: send signatures, not full bodies
 
-Even the relevant pieces are often longer than they need to be. To judge whether a function matters, the assistant usually only needs to see its name, its inputs and outputs, and a short description of what it does. It rarely needs every line of the body up front.
+Even the retrieved chunks are usually heavier than the moment requires. To decide whether a function is relevant, the agent typically needs its signature, its docstring, and a pointer to where it lives. It does not need the full body until it commits to using it.
 
-So the second step sends an outline. The top few results come through in full, because those are the most likely to be needed in detail. The rest arrive as a signature and a one line description, with the body replaced by a clearly marked placeholder. Every outline also carries a label that points back to the exact file and line range it came from. If the assistant decides it does need the full body after all, it can ask for that specific range and get it.
+So the second step renders most results as skeletons. The highest-ranked chunks are sent in full, since they are the most likely to be needed in depth. The rest are sent as a signature plus a first-paragraph docstring, with the body replaced by an explicit placeholder. Every skeleton carries a path and line range, so when the agent does need a body it requests that exact span and gets it.
 
-Nothing is ever quietly deleted or scrambled. An outline is always valid, readable code, just shorter. This step trims the size of each result while keeping a clear path back to the detail for the rare moments the detail is genuinely needed.
+Nothing is truncated mid-statement or silently dropped. A skeleton is always parseable, valid code, just smaller. The result is a lower per-chunk token cost with a cheap, precise path back to the detail when the detail is warranted. Because retrieval itself is untouched, recall is unchanged by construction, so this step is measured purely as tokens saved at constant retrieval quality.
 
-## Step three: keep the running notes short
+## Step three: compress the running history
 
-The first two steps deal with code coming in. The third deals with the notes piling up. As a task goes on, the assistant builds a history: the searches it ran, the files it read, the conclusions it reached. By default all of this travels with every new message, so a long task re-sends the same growing transcript over and over.
+The first two steps shrink the code flowing in. The third shrinks the history piling up. As a task proceeds, the agent accumulates a transcript of tool calls and observations, and by default every byte of it rides along on each subsequent request. On a long task that transcript dominates the prompt and is re-billed every turn.
 
-Cogni keeps that history in check. The most recent action and its result are always kept word for word, because that is the freshest and most important context. Older observations are condensed into short summaries that preserve the facts that matter: file paths, names, error messages, and decisions. Two safeguards stop this from backfiring. Cogni only condenses when the history has actually grown past a set size, so short tasks pay nothing at all, and it summarizes each old observation only once rather than redoing the work on every step.
+Cogni compresses that history between steps. The most recent action and its observation are always kept verbatim, since that is the freshest state the agent needs to choose its next move. Older observations are summarized under an editable guideline that names what must survive: file paths, identifiers, error messages, and conclusions. Two design choices keep the mechanism from costing more than it saves. Compression only runs once the running history exceeds a budget, so short tasks incur nothing, and each observation is summarized at most once rather than re-summarized on every turn.
 
-There is a subtle but important detail here. Summarizing is itself work, and work costs tokens. We do that work on a small, cheap model, while the savings land on the larger and more expensive model the assistant runs on. Measured on real recorded sessions, the raw word count comes out roughly even, but the actual cost drops by about a fifth, because we move effort from the expensive model to the cheap one and shrink the expensive context along the way.
+There is a cost subtlety worth stating plainly. Summarization is itself an inference call, and that call costs tokens. We route it to a small, cheap model while the savings accrue on the larger model the agent runs on. Measured by replaying recorded sessions, the raw token count comes out close to flat, but net cost drops by roughly a fifth, because the overhead lands on a cheaper model and the expensive agent context shrinks by around an eighth. The win is in cost, not raw token volume, and we report it both ways.
 
-## How we keep ourselves honest
+## How the numbers stay honest
 
-It is easy to make a number look good by quietly lowering quality, so we work hard not to. The trick is to always compare against the same fixed work and change only the one thing we are testing. For the first two steps, the set of answers the assistant must find never changes, so any savings cannot have come from simply finding fewer of them. For the third step, we replay real recorded sessions and change only whether the history is compressed, so the final answer is identical by construction and the measured savings are real.
+The easy way to fake a token reduction is to quietly accept worse output. We design against that by holding the work fixed and varying only the component under test. For retrieval and skeletons, the set of answers the agent must surface never changes, so the savings cannot come from finding fewer of them. For history compression, we replay recorded trajectories and toggle only whether the history is compressed, which makes the final answer identical by construction and the measured delta pure.
 
-We also report cost in more than one way, including the least flattering way, so anyone reading can see exactly where a gain comes from and where it does not. Each step is published with its own measured result before the next one is built. The point of Cogni is not a single dramatic claim. It is three honest, separate gains that add up to a coding assistant that does the same work for noticeably less money.
+We also publish cost in several framings, including the least flattering one, so the source of any gain is visible rather than assumed. And every step ships with its own measured result before the next is built. Cogni is not one headline number. It is three separate, independently verified reductions that compound into an agent doing the same work for materially less.
