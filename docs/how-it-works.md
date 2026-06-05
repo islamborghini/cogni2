@@ -4,7 +4,23 @@ Modern coding assistants, the kind that read your repository and write fixes for
 
 Cogni is a thin layer that sits between the coding assistant and the model. Its job is simple to state and hard to do well: send the model less, without making the assistant any worse at finishing the job. We do this in three steps, and we measure each step on its own so we always know which part is pulling its weight. The rule we hold ourselves to is strict. A change only counts as a win if the assistant still succeeds just as often. Saving words by giving worse answers is not progress.
 
-Here are the three steps.
+Here are the three steps. At a glance, the assistant sends a large and growing amount of context on every step, and Cogni shrinks it in three ways before it reaches the model.
+
+```mermaid
+flowchart LR
+    A["Coding assistant"]
+    subgraph C [The Cogni layer]
+      direction TB
+      S1["Step 1: find only the relevant code"]
+      S2["Step 2: send outlines, not full bodies"]
+      S3["Step 3: keep the running notes short"]
+      S1 --> S2 --> S3
+    end
+    M["Language model"]
+    A -->|"full code and growing notes"| C
+    C -->|"much less text, same answer"| M
+    M -->|"answer"| A
+```
 
 ## Step one: find only the code that matters
 
