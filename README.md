@@ -1,187 +1,113 @@
 # Cogni
 
-A token-efficient context layer for coding agents. Cogni reduces the tokens an
-agent (e.g. Claude Code) spends per task **without lowering how often it
-succeeds** — a Pareto improvement, not a quality trade.
+A token-efficient context layer for coding agents. Cogni cuts the tokens, and the cost, an agent spends per task without lowering how often it succeeds.
 
-The headline result is a reproducible benchmark number:
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Stages](https://img.shields.io/badge/parts-3%2F3%20shipped-success)
 
-> **same task success rate, N% fewer tokens.**
+## Overview
 
-## What it does
+A coding agent re-sends a growing context to the model on every step: retrieved code, tool outputs, and the transcript of its own reasoning. You pay for all of it, on every turn. Cogni sits between the agent and the model API and trims what gets sent, without changing the answers the agent produces.
 
-Three components, each built and measured as an independent ablation:
+The project is three components, each built and measured as an independent ablation. The value is the per-component number, not one combined figure, and the bar is fixed in advance: a reduction only counts if task success holds. Efficiency here means tokens or cost at a fixed success rate, never a quality trade.
 
-1. **cAST retrieval** *(shipped)* — chunk the codebase along AST boundaries and
-   retrieve only the chunks relevant to the task.
-2. **Skeleton-first compression** *(shipped)* — send signatures + docstrings instead
-   of full bodies when the body isn't needed, with a visible `path:start-end`
-   anchor so the agent can re-read on demand.
-3. **ACON-style history compression** *(shipped)* — condense the agent's
-   accumulated history (prior tool outputs, file reads, earlier turns) between
-   steps, always keeping the most recent action+observation verbatim.
+Two constraints shape the design:
 
-The value of the project is the **per-stage number**, not one combined figure.
-Each stage must produce a measured result before the next is added.
+- It targets a closed, frontier-model API. There are no logits, hidden states, or prefill tricks. Everything is retrieval, static analysis, or a normal API call.
+- Every claim is measured by holding the work fixed and varying only the component under test, so a saving can never come from quietly doing less.
 
-## Constraints
+For a plain-language walkthrough of the design, see [`docs/how-it-works.md`](docs/how-it-works.md).
 
-- Targets a **closed frontier model API** — no hidden states, logits, or
-  low-level prefill. Everything runs as retrieval, static analysis, or a normal
-  API call.
-- "Efficiency" means tokens at a **fixed success rate**. A token reduction that
-  lowers success is not a result.
+### Requirements and build
 
-## Stage 1 — cAST retrieval (shipped)
-
-The retrieval floor every later stage is measured against. Chunks are emitted at
-AST boundaries (function / method / signatures-only `class_header`), embedded, and
-served by exact cosine search over a local SQLite store.
-
-Baseline on `django/django` @ `1651351386…` (4.2.3), `voyage-code-3`, k=10,
-800-token chunk budget over a 15,198-chunk corpus:
-
-- **recall@10 (localization, macro-avg) = 0.824**
-- **mean `retrieved_code` tokens = 3554**
-
-recall@10 is averaged over localization tasks (a bounded answer set). Enumeration
-tasks are reported separately — top-k retrieval can't enumerate scattered call
-sites, so they're not folded into the headline. Full per-task table:
-[`bench/results/stage1.md`](bench/results/stage1.md).
-
-### Reproduce
+Cogni is a Go module (Go 1.26 or newer). The offline test suite needs no API keys:
 
 ```sh
-# pin the target repo
+git clone https://github.com/islamborghini/cogni2
+cd cogni2
+go test ./...
+```
+
+The end-to-end benchmarks that call external services are gated behind a build tag and environment variables (see [The benchmark](#the-benchmark)), so they never run by accident.
+
+## The three parts
+
+| Component | What it does | Headline result |
+|---|---|---|
+| 1. cAST retrieval | chunk the repo at AST boundaries, embed, retrieve the top-k relevant chunks | recall@10 = 0.824, mean retrieved-code = 3554 tokens |
+| 2. Skeleton-first compression | render lower-ranked chunks as signature + docstring + anchor | tokens down, retrieval and syntax intact (111 of 111 parse) |
+| 3. History compression | summarize older observations between turns, keep the latest verbatim | about 20% lower net cost, success held by construction |
+
+**1. cAST retrieval** (`internal/chunk`, `internal/embed`, `internal/index`). The repository is split along abstract syntax tree boundaries into functions, methods, and signature-only class headers, embedded, and served by exact cosine search over a local SQLite store. The agent gets a few relevant definitions instead of whole files. Full report: [`bench/results/stage1.md`](bench/results/stage1.md).
+
+**2. Skeleton-first compression** (`internal/skeleton`). This changes only how retrieved chunks are rendered, not what is retrieved. The top chunks are sent in full; the rest are sent as a signature plus a first-paragraph docstring, with the body replaced by a placeholder and a `path:start-end` anchor for re-reading on demand. Bodies are omitted, never pruned mid-statement, so a skeleton is always valid code. Because retrieval is untouched, recall is unchanged by construction. Full report: [`bench/results/stage2.md`](bench/results/stage2.md).
+
+**3. History compression** (`internal/compress`, `internal/agent`). Between steps, older tool observations are summarized under an editable guideline while the most recent action and observation are kept verbatim. Compression runs only when the running history exceeds a budget, and each observation is summarized at most once. The summarizer runs on a cheaper model than the agent, so net cost drops about 20% even though the raw token count stays close to flat. It is measured by replaying recorded trajectories, so the final answer, and success, are identical by construction. Full report: [`bench/results/stage3.md`](bench/results/stage3.md).
+
+## The benchmark
+
+Every number comes from a frozen benchmark, committed once so results stay comparable across changes.
+
+- **Target**: `django/django` pinned at `1651351386ab31d8ae492c8a4922797714ca97d1` (release 4.2.3).
+- **Task set**: 20 natural-language queries with hand-labeled ground-truth code spans, in `bench/tasks.yaml`. The set is frozen; only the loader changes if the corpus is swapped.
+- **Instrument**: a tiktoken-compatible token meter that buckets every counted string by source (retrieved code, history, system, output), so each component's effect is attributable. Cost combines those tokens with per-model prices.
+- **Discipline**: success is held fixed while only the component under test varies, so retrieval recall and end-to-end answers are unchanged by construction. Results are reported in more than one framing, including the least flattering one. Committed reports live in `bench/results/`.
+
+The evals are gated behind the `eval` build tag and `COGNI_EVAL=1`, and most need an embedding key. Pin the target repo once:
+
+```sh
 git clone https://github.com/django/django
 git -C django checkout 1651351386ab31d8ae492c8a4922797714ca97d1
+```
 
-# embed + measure (Voyage by default; or a local, no-quota Ollama server:
-#   EMBED_PROVIDER=ollama EMBED_MODEL=mxbai-embed-large CHUNK_MAX_TOKENS=400)
-VOYAGE_API_KEY=… COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
+Then reproduce each component:
+
+```sh
+# Part 1: embed the corpus and score retrieval (cached after the first run)
+VOYAGE_API_KEY=your-key COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
   go test -tags eval ./bench/ -run Retrieval -v -timeout 30m
-```
 
-The index is cached under `$COGNI_INDEX_DIR` (default `$TMPDIR/cogni2-index`),
-keyed by repo + embedder + budget, so the corpus is embedded once and later runs
-reuse the vectors.
-
-## Stage 2 — skeleton-first compression (shipped)
-
-Stage 2 changes only how retrieved chunks are *rendered*, not what is retrieved.
-The top chunks are sent as full bodies until ~60% of an assembly budget is used;
-the rest are sent as **signature + first-paragraph docstring + a body placeholder**,
-each keeping its `path:start-end` anchor so the agent can re-read the body on
-demand. Bodies are **omitted, not pruned** — a skeleton is never broken code.
-
-Because retrieval is untouched, **recall is unchanged by construction** — here it is
-a guard, not the result. So the Stage 2 result is framed *tokens down, retrieval and
-syntax intact*; "no quality loss" / "same success rate" stay unproven until
-end-to-end (Stage 3). Sweeping the assembly budget on the same corpus (recall@10
-holds at **0.824**; **111/111** emitted skeletons parse as valid Python):
-
-| budget | mean `retrieved_code` | skeletonization reduction¹ | chunks_dropped |
-|---:|---:|---:|---:|
-| 6000 | 3350 | 5.7% | 0 |
-| 5000 | 3097 | 10.7% | 1 |
-| 4000 | 2844 | 17.6% | 1 |
-| 3000 | 2334 | 24.2% | 15 |
-| 2000 | 1718 | 38.0% | 32 |
-
-¹ vs. the *same kept chunks* rendered as full bodies at the same budget — isolating
-skeleton-first compression from the budget cap, so it survives the "isn't this just
-a smaller budget" challenge. The full report also carries total reduction vs. Stage
-1, which is smaller because Stage 2 adds the re-read anchors Stage 1 didn't carry.
-
-The safe operating point is the top of the curve: at budget 6000, skeletonization
-cuts **~5.7% of retrieved-code tokens** with **zero evictions** and recall intact.
-Read that number narrowly: it is 5.7% of the `retrieved_code` bucket — one of the
-four the meter tracks (system / history / output are the others) — not of an agent's
-total token spend, and because bodies are *omitted* the save only sticks if the agent
-doesn't re-read them. Below that budget the reduction grows, but chunks begin to be
-dropped at budget 5000 — the **eviction boundary** — so recall@10 stops reflecting
-what the agent sees, and the safety claim becomes **parse-validity + chunks_dropped**,
-not recall. Which budget to ship — and whether the re-read cost nets out — is deferred
-to Stage 3, where end-to-end success rate can weigh the coverage/token tradeoff. Full
-per-budget report: [`bench/results/stage2.md`](bench/results/stage2.md).
-
-### Reproduce
-
-```sh
-# same pinned checkout as Stage 1; reuses the cached index (no re-embedding)
-VOYAGE_API_KEY=… COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
+# Part 2: reuse the cached index and sweep the skeleton budget
+VOYAGE_API_KEY=your-key COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
   go test -tags eval ./bench/ -run Skeleton -v -timeout 30m
-```
 
-## Stage 3 — history compression (shipped)
-
-Stage 3 condenses the agent's accumulated history (prior tool outputs, file reads,
-earlier turns) between steps. It keeps the most recent action and observation verbatim,
-summarizes older observations under an editable guideline, only acts once the running
-history exceeds a budget, and summarizes each observation at most once.
-
-It is measured the same way as Stages 1 and 2: on fixed inputs, varying only the
-rendering. The eval replays 20 recorded agent trajectories and compares the token cost
-of feeding each one back uncompressed vs. compressed. Because the action sequence is
-identical, the final answer and success are **unchanged by construction**, so the token
-delta is pure compression effect, with none of the run-to-run noise a live A/B test
-carries. Replayed over the Django trajectories (history-budget sweep, compressed
-observation size modeled deterministically):
-
-| history budget | net cost | gross tokens | net tokens |
-|---:|---:|---:|---:|
-| 2000 | **19.4%** | 12.5% | -7.5% |
-| 1500 | **19.1%** | 13.1% | -14.3% |
-| 1000 | **18.9%** | 13.1% | -14.6% |
-| 500  | **20.0%** | 13.7% | -14.4% |
-
-Read three ways, because they say different things. **Net cost** (the headline) prices
-the summarizer overhead on a cheap model and the agent tokens on the agent model, so it
-is the bill you actually pay: about 20% lower. **Gross tokens** is how much smaller the
-expensive agent context gets, about 13%. **Net tokens** counts the summarizer's tokens
-at face value and lands near break-even, because the one-time summarization barely
-amortizes on this short-horizon set. The win is in **cost**, not raw token volume.
-Whether compressed context would change the agent's *decisions* is the separate live
-end-to-end question, deferred (it needs a stronger or more deterministic agent than the
-free-tier open model used so far). Full report:
-[`bench/results/stage3.md`](bench/results/stage3.md).
-
-### Reproduce
-
-```sh
-# replays the recorded trajectories under bench/runs/stage3/ (no API key or index needed).
-# those trajectories come from a live end-to-end run and are gitignored, so the committed
-# bench/results/stage3.md is the reference figure for a fresh clone.
+# Part 3: replay recorded trajectories (no key or index needed)
 COGNI_EVAL=1 go test -tags eval ./bench/ -run Replay -v
 ```
 
-## Layout
+The index is cached under `$COGNI_INDEX_DIR` (default `$TMPDIR/cogni2-index`), keyed by repo, embedder, and budget, so the corpus is embedded only once. The Part 3 replay reads recorded trajectories under `bench/runs/` (produced by a live run and gitignored), so for a fresh clone the committed `bench/results/stage3.md` is the reference figure.
+
+## Contributing
+
+Contributions are welcome through issues and pull requests.
+
+**Setup.** Build and test with `go test ./...`. The offline suite needs no keys and must stay green. Format with `gofmt` and keep `golangci-lint` clean; both run in CI on every pull request.
+
+**Conventions.**
+
+- Keep pull requests small and focused, one logical change each. Commit messages are a single line prefixed with `feat:`, `fix:`, `docs:`, `test:`, or `chore:`.
+- Some shapes are load-bearing and must not change: the `RetrievedChunk` contract in `internal/retrieve`, the meter buckets in `internal/meter`, and the frozen task set in `bench/tasks.yaml`. Carry any extra data out of band rather than mutating these.
+- A new component or capability ships with its own measured benchmark result before it is merged. Efficiency means tokens or cost at a fixed success rate, so a reduction that lowers success is not a result.
+
+**Project layout.**
 
 ```
-internal/retrieve/   LOCKED data contract: RetrievedChunk + Retriever
-internal/meter/      token meter — tiktoken-compatible, bucketed accounting
+internal/retrieve/   locked data contract: RetrievedChunk + Retriever
+internal/meter/      tiktoken-compatible, bucketed token accounting
 internal/parse/      tree-sitter parsing (ported, Apache-2.0)
-internal/chunk/      cAST AST chunker (Stage 1)
-internal/embed/      Embedder: Voyage / OpenAI-compatible / Fake (Stage 1)
-internal/index/      file watcher + SQLite vector store + retriever (Stage 1)
-internal/skeleton/   skeleton-first compression (Stage 2)
-internal/compress/   history compression (Stage 3)
-internal/agent/      multi-turn loop + OpenAI-compatible model client (Stage 3)
-bench/               frozen task set + gated eval + results
+internal/chunk/      cAST AST chunker (part 1)
+internal/embed/      Embedder: Voyage, OpenAI-compatible, or Fake (part 1)
+internal/index/      file watcher, SQLite vector store, retriever (part 1)
+internal/skeleton/   skeleton-first compression (part 2)
+internal/compress/   history compression (part 3)
+internal/agent/      multi-turn loop and OpenAI-compatible model client (part 3)
+bench/               frozen task set, gated evals, committed results
+docs/                design and usage guides
 ```
 
-## Status
-
-**All three stages are shipped and measured.** Stages 1 (cAST retrieval) and 2
-(skeleton-first compression) are measured offline against the frozen task set; Stage 3
-(history compression) is measured by replaying recorded agent trajectories, where success
-holds by construction. The remaining open thread is the live end-to-end question for
-Stage 3 (whether compressed context changes the agent's decisions), which needs a stronger
-or more deterministic agent than the free-tier open model used so far.
-
-For a plain-English walkthrough of all three steps, see
-[`docs/how-it-works.md`](docs/how-it-works.md).
+Maintained by [@islamborghini](https://github.com/islamborghini).
 
 ## License
 
-Apache-2.0. Portions ported from the original Cogni project (same license).
+Apache-2.0. Portions are ported from the original Cogni project under the same license.
