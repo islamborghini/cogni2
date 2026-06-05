@@ -17,7 +17,7 @@ Three components, each built and measured as an independent ablation:
 2. **Skeleton-first compression** *(shipped)* — send signatures + docstrings instead
    of full bodies when the body isn't needed, with a visible `path:start-end`
    anchor so the agent can re-read on demand.
-3. **ACON-style history compression** *(planned)* — condense the agent's
+3. **ACON-style history compression** *(shipped)* — condense the agent's
    accumulated history (prior tool outputs, file reads, earlier turns) between
    steps, always keeping the most recent action+observation verbatim.
 
@@ -113,6 +113,48 @@ VOYAGE_API_KEY=… COGNI_EVAL=1 COGNI_BENCH_REPO="$PWD/django" \
   go test -tags eval ./bench/ -run Skeleton -v -timeout 30m
 ```
 
+## Stage 3 — history compression (shipped)
+
+Stage 3 condenses the agent's accumulated history (prior tool outputs, file reads,
+earlier turns) between steps. It keeps the most recent action and observation verbatim,
+summarizes older observations under an editable guideline, only acts once the running
+history exceeds a budget, and summarizes each observation at most once.
+
+It is measured the same way as Stages 1 and 2: on fixed inputs, varying only the
+rendering. The eval replays 20 recorded agent trajectories and compares the token cost
+of feeding each one back uncompressed vs. compressed. Because the action sequence is
+identical, the final answer and success are **unchanged by construction**, so the token
+delta is pure compression effect, with none of the run-to-run noise a live A/B test
+carries. Replayed over the Django trajectories (history-budget sweep, compressed
+observation size modeled deterministically):
+
+| history budget | net cost | gross tokens | net tokens |
+|---:|---:|---:|---:|
+| 2000 | **19.4%** | 12.5% | -7.5% |
+| 1500 | **19.1%** | 13.1% | -14.3% |
+| 1000 | **18.9%** | 13.1% | -14.6% |
+| 500  | **20.0%** | 13.7% | -14.4% |
+
+Read three ways, because they say different things. **Net cost** (the headline) prices
+the summarizer overhead on a cheap model and the agent tokens on the agent model, so it
+is the bill you actually pay: about 20% lower. **Gross tokens** is how much smaller the
+expensive agent context gets, about 13%. **Net tokens** counts the summarizer's tokens
+at face value and lands near break-even, because the one-time summarization barely
+amortizes on this short-horizon set. The win is in **cost**, not raw token volume.
+Whether compressed context would change the agent's *decisions* is the separate live
+end-to-end question, deferred (it needs a stronger or more deterministic agent than the
+free-tier open model used so far). Full report:
+[`bench/results/stage3.md`](bench/results/stage3.md).
+
+### Reproduce
+
+```sh
+# replays the recorded trajectories under bench/runs/stage3/ (no API key or index needed).
+# those trajectories come from a live end-to-end run and are gitignored, so the committed
+# bench/results/stage3.md is the reference figure for a fresh clone.
+COGNI_EVAL=1 go test -tags eval ./bench/ -run Replay -v
+```
+
 ## Layout
 
 ```
@@ -123,16 +165,22 @@ internal/chunk/      cAST AST chunker (Stage 1)
 internal/embed/      Embedder: Voyage / OpenAI-compatible / Fake (Stage 1)
 internal/index/      file watcher + SQLite vector store + retriever (Stage 1)
 internal/skeleton/   skeleton-first compression (Stage 2)
-internal/compress/   history compression (Stage 3 — planned)
+internal/compress/   history compression (Stage 3)
+internal/agent/      multi-turn loop + OpenAI-compatible model client (Stage 3)
 bench/               frozen task set + gated eval + results
 ```
 
 ## Status
 
-**Stages 1 (cAST retrieval) and 2 (skeleton-first compression) are shipped and
-measured** — see the baselines above. Stage 3 (ACON-style history compression) is
-next; it is also where the Stage 2 assembly budget gets pinned, against end-to-end
-success rate rather than token count alone.
+**All three stages are shipped and measured.** Stages 1 (cAST retrieval) and 2
+(skeleton-first compression) are measured offline against the frozen task set; Stage 3
+(history compression) is measured by replaying recorded agent trajectories, where success
+holds by construction. The remaining open thread is the live end-to-end question for
+Stage 3 (whether compressed context changes the agent's decisions), which needs a stronger
+or more deterministic agent than the free-tier open model used so far.
+
+For a plain-English walkthrough of all three steps, see
+[`docs/how-it-works.md`](docs/how-it-works.md).
 
 ## License
 
