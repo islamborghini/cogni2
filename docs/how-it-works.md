@@ -8,17 +8,16 @@ Here are the three steps. At a glance, the assistant sends a large and growing a
 
 ```mermaid
 flowchart LR
-    A["Coding assistant"]
+    A["Coding<br/>assistant"]
+    A -->|"full code and<br/>growing notes"| C
     subgraph C [The Cogni layer]
       direction TB
-      S1["Step 1: find only the relevant code"]
-      S2["Step 2: send outlines, not full bodies"]
-      S3["Step 3: keep the running notes short"]
+      S1["Step 1<br/>Find only the<br/>relevant code"]
+      S2["Step 2<br/>Send outlines,<br/>not full bodies"]
+      S3["Step 3<br/>Keep the running<br/>notes short"]
       S1 --> S2 --> S3
     end
-    M["Language model"]
-    A -->|"full code and growing notes"| C
-    C -->|"much less text, same answer"| M
+    C -->|"much less text,<br/>same answer"| M["Language<br/>model"]
     M -->|"answer"| A
 ```
 
