@@ -120,11 +120,20 @@ func NewOpenAICompatible() (*OpenAICompatible, error) {
 			maxInput = n
 		}
 	}
+	// Local servers (Ollama, TEI) crash on the default 128-text batch; EMBED_BATCH_SIZE
+	// caps texts per request. 0 keeps the shared default (see batched).
+	batchSize := 0
+	if v := os.Getenv("EMBED_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			batchSize = n
+		}
+	}
 	return &OpenAICompatible{
 		APIKey:        os.Getenv("EMBED_API_KEY"),
 		Model:         model,
 		Endpoint:      envOr("EMBED_ENDPOINT", defaultOllamaEndpoint),
 		MaxInputChars: maxInput,
+		BatchSize:     batchSize,
 		Client:        &http.Client{Timeout: httpTimeout},
 	}, nil
 }
