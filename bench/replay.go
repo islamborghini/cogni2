@@ -38,14 +38,6 @@ func msgTokens(m agent.ChatMessage, tok meter.Tokenizer) int {
 	return n
 }
 
-func contextTokens(msgs []agent.ChatMessage, tok meter.Tokenizer) int {
-	n := 0
-	for _, m := range msgs {
-		n += msgTokens(m, tok)
-	}
-	return n
-}
-
 // ReplayCost replays a recorded message log and sums the tokens the loop pays. At
 // each model turn it charges perTurnSystem (the system prompt + tool schemas,
 // re-sent every turn and identical across arms) plus the current context. With
@@ -53,44 +45,14 @@ func contextTokens(msgs []agent.ChatMessage, tok meter.Tokenizer) int {
 // incrementally, exactly as the live loop does. Overhead is filled in by the
 // caller from its MeteringSummarizer.
 func ReplayCost(ctx context.Context, messages []agent.ChatMessage, perTurnSystem int, comp compress.Compressor, budget int, tok meter.Tokenizer) (ReplayResult, error) {
-	var r ReplayResult
-	rebuild := make([]agent.ChatMessage, 0, len(messages))
-	i := 0
-	for i < len(messages) {
-		m := messages[i]
-		if m.Role != agent.RoleAssistant {
-			rebuild = append(rebuild, m) // the goal (first user turn) and any stray
-			i++
-			continue
-		}
-
-		// A model turn: it was sent system + tools + everything accumulated so far.
-		r.Input += perTurnSystem + contextTokens(rebuild, tok)
-		r.Output += msgTokens(m, tok)
-		rebuild = append(rebuild, m)
-		i++
-		for i < len(messages) && messages[i].Role == agent.RoleTool {
-			rebuild = append(rebuild, messages[i])
-			i++
-		}
-
-		if comp == nil {
-			continue
-		}
-		turns := make([]compress.Turn, len(rebuild))
-		for j, mm := range rebuild {
-			turns[j] = compress.Turn{Role: mm.Role, Content: mm.Content, Step: j, Kind: mm.Origin, Compressed: mm.Compressed}
-		}
-		res, err := comp.Compress(ctx, turns, budget)
-		if err != nil {
-			return r, err
-		}
-		for j := range res.History {
-			rebuild[j].Content = res.History[j].Content
-			rebuild[j].Compressed = res.History[j].Compressed
-		}
-		if res.Summarized > 0 || res.Dropped > 0 {
-			r.Engaged = true
+	prompts, output, engaged, err := replayPrompts(ctx, messages, perTurnSystem, comp, budget, tok)
+	if err != nil {
+		return ReplayResult{}, err
+	}
+	r := ReplayResult{Output: output, Engaged: engaged}
+	for _, p := range prompts {
+		for _, b := range p {
+			r.Input += b.Tok
 		}
 	}
 	return r, nil
