@@ -158,9 +158,16 @@ func oldestSummarizable(turns []Turn, protected []bool, tok Tokenizer, minTokens
 
 // total is the token count of the whole history under the configured tokenizer.
 func (c *GuidelineCompressor) total(turns []Turn) int {
+	return totalTokens(turns, c.Tok)
+}
+
+// totalTokens sums the content tokens of a history under tok. Shared by both the
+// GuidelineCompressor and the CompactingCompressor so the two policies measure the
+// budget identically.
+func totalTokens(turns []Turn, tok Tokenizer) int {
 	n := 0
 	for _, t := range turns {
-		n += c.Tok.Count(t.Content)
+		n += tok.Count(t.Content)
 	}
 	return n
 }
