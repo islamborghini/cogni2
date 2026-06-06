@@ -28,7 +28,7 @@ func TestReplayCache(t *testing.T) {
 	if os.Getenv("COGNI_EVAL") != "1" {
 		t.Skip("set COGNI_EVAL=1 to run the cache-aware replay")
 	}
-	dir := filepath.Join("..", "bench", "runs", "stage3", "baseline")
+	dir := filepath.Join("..", "bench", "runs", envOrDefault("COGNI_RUNS_SUBDIR", "stage3"), "baseline")
 	trajs := loadBaselineTrajectories(dir)
 	if len(trajs) == 0 {
 		t.Skipf("no baseline trajectories in %s — run the end-to-end eval first", dir)
@@ -115,7 +115,7 @@ func TestReplayCache(t *testing.T) {
 		rows = append(rows, row)
 	}
 
-	set, err := Load("tasks.yaml")
+	set, err := Load(envOrDefault("COGNI_TASKS", "tasks.yaml"))
 	if err != nil {
 		t.Fatalf("load tasks: %v", err)
 	}
@@ -128,7 +128,8 @@ func TestReplayCache(t *testing.T) {
 	if err := os.MkdirAll("results", 0o755); err != nil {
 		t.Fatalf("mkdir results: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join("results", "stage3-cache.md"), []byte(md), 0o644); err != nil {
-		t.Fatalf("write stage3-cache.md: %v", err)
+	outName := envOrDefault("COGNI_RUNS_SUBDIR", "stage3") + "-cache.md"
+	if err := os.WriteFile(filepath.Join("results", outName), []byte(md), 0o644); err != nil {
+		t.Fatalf("write %s: %v", outName, err)
 	}
 }
