@@ -14,6 +14,10 @@ import (
 // run forever (and burn the rate-limited free tier).
 const DefaultMaxTurns = 12
 
+// maxNoToolCallNudges bounds how many times the loop re-prompts a model that
+// answered in prose instead of calling a tool before giving up the task.
+const maxNoToolCallNudges = 2
+
 // DefaultSystemPrompt frames the task for the agent. The eval may override it.
 const DefaultSystemPrompt = `You are a code navigation assistant working in a large Python codebase.
 Find the code that answers the user's question, then report exactly where it is.
@@ -106,6 +110,7 @@ func Run(ctx context.Context, input RunInput, deps Deps) (Outcome, Transcript, L
 	msgs := []ChatMessage{{Role: RoleUser, Content: input.Query, Origin: meter.BucketHistory}}
 	var out Outcome
 	var ledger Ledger
+	noToolCalls := 0 // consecutive turns where the model answered in prose, not a tool call
 
 	for turn := 0; turn < maxTurns; turn++ {
 		resp, err := deps.Model.Generate(ctx, Request{System: deps.System, Messages: msgs, Tools: specs, Temperature: 0})
@@ -120,9 +125,23 @@ func Run(ctx context.Context, input RunInput, deps Deps) (Outcome, Transcript, L
 		out.Turns = turn + 1
 
 		if len(assistant.ToolCalls) == 0 {
-			out.StopReason = "no_tool_call"
-			return out, Transcript{Messages: msgs}, ledger, nil
+			// Weaker (esp. local) models sometimes reason in prose instead of emitting
+			// a tool call. Rather than abandon the task, nudge once or twice and let it
+			// try again — this keeps the trajectory going (and recorded) instead of
+			// dropping it. Past the cap, accept that it has stopped calling tools.
+			noToolCalls++
+			if noToolCalls > maxNoToolCallNudges {
+				out.StopReason = "no_tool_call"
+				return out, Transcript{Messages: msgs}, ledger, nil
+			}
+			msgs = append(msgs, ChatMessage{
+				Role:    RoleUser,
+				Content: "Respond with exactly one tool call (search_code, read_file, or submit_answer) — not prose.",
+				Origin:  meter.BucketHistory,
+			})
+			continue
 		}
+		noToolCalls = 0
 
 		submitted := false
 		for _, tc := range assistant.ToolCalls {

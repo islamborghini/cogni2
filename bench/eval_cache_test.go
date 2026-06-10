@@ -46,6 +46,12 @@ func TestReplayCache(t *testing.T) {
 	budgets := parseBudgets(envOrDefault("COGNI_HISTORY_BUDGETS", "2000,1500,1000,500"))
 
 	agentP := PriceFor(envOrDefault("COGNI_AGENT_MODEL", "openai/gpt-oss-120b"))
+	if agentP.InPer1M == 0 {
+		// Local/unknown agent model (e.g. a self-hosted qwen3) has no list price. The
+		// trajectory is just an action sequence; price it at a representative frontier
+		// rate to answer "what would this cost on a caching paid API".
+		agentP = PriceFor("openai/gpt-oss-120b")
+	}
 	compP := PriceFor(envOrDefault("COMPRESS_MODEL", "llama-3.1-8b-instant"))
 	if compP.InPer1M == 0 {
 		compP = agentP // unknown compressor: price like the agent (conservative)

@@ -29,6 +29,11 @@ var groqListPrices = map[string]Price{
 	"llama-3.1-8b-instant":    {0.05, 0.08},
 	"openai/gpt-oss-20b":      {0.075, 0.30},
 	"openai/gpt-oss-120b":     {0.15, 0.60},
+	// Gemini free tier (1M TPM) is the practical long-horizon agent: Groq's free
+	// 8k TPM 413s a multi-turn code-context prompt by ~turn 5. List prices here so
+	// the cache cost model has a number even though the free tier bills $0.
+	"gemini-2.0-flash": {0.10, 0.40},
+	"gemini-2.5-flash": {0.30, 2.50},
 }
 
 // PriceFor returns list prices for a model, or zero (cost reads 0) if unknown.

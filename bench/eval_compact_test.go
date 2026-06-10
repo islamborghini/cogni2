@@ -52,6 +52,11 @@ func TestCompactCacheComparison(t *testing.T) {
 	}
 
 	agentP := PriceFor(envOrDefault("COGNI_AGENT_MODEL", "openai/gpt-oss-120b"))
+	if agentP.InPer1M == 0 {
+		// Local/unknown agent model (e.g. self-hosted qwen3) has no list price; price
+		// the trajectory at a representative frontier rate for the cost model.
+		agentP = PriceFor("openai/gpt-oss-120b")
+	}
 	compP := PriceFor(envOrDefault("COMPRESS_MODEL", "llama-3.1-8b-instant"))
 	if compP.InPer1M == 0 {
 		compP = agentP
