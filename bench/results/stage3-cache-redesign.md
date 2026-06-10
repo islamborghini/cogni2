@@ -42,3 +42,34 @@ Synthetic trajectories of increasing length (goal + N rounds of action + large o
 | 64 | 97% | 42% | 49% | +29.5% | +38.0% |
 
 Net cost is reduction vs the uncompressed baseline (positive = cheaper). The crossover is the argument for the redesign; demonstrating it on real work needs the long-horizon (SWE-bench) task set, which is the separate next step.
+
+## Status (2026-06-10): what is proven, what is deferred
+
+**Proven.**
+- The cache trap is real on recorded trajectories: history-rewriting Stage 3 goes from a small
+  win without caching to **-13% to -17% net cost** at a frontier read discount (`stage3-cache.md`).
+- The redesign is cache-safe by construction: checkpoint compaction busts the prefix at most once
+  per checkpoint and is idempotent (unit-tested in `internal/compress/compact_test.go`).
+- The mechanism wins in the limit: the synthetic sweep above shows checkpoint compaction going
+  **net-positive past ~16 turns** and beating the rewrite policy by a widening margin.
+
+**Deferred (needs budget).** The remaining question — does checkpoint compaction win on *real*
+long agent trajectories — requires a capable agent doing 15-30 turn runs. Free inference cannot
+produce those: Groq's free tier 413s at 8k TPM by ~turn 5; a fresh Gemini project reported
+free-tier quota 0; and a local qwen3:8b submits in 3-4 turns (too short to engage compression) or
+times out. The wall is **agent capability, which is not free** — not a gap in this project.
+
+**Infra ready, so the budget-run is one command.** Built and waiting: the swappable loader
+(`COGNI_TASKS`/`COGNI_RUNS_SUBDIR`), the SWE-bench Lite pytest task set
+(`bench/tasks-swebench.yaml`, 12 long-horizon localization tasks), local-embedding support
+(`EMBED_BATCH_SIZE` for Ollama), a tool-call nudge so weaker models do not drop trajectories, and
+representative pricing for unpriced/local models. To finish, point the agent at a frontier API
+(~$5-20) and run:
+
+```sh
+COGNI_EVAL=1 COGNI_TASKS=tasks-swebench.yaml COGNI_RUNS_SUBDIR=stage3-swebench \
+  COGNI_BENCH_REPO=/path/to/pytest@6bd3f31 \
+  LLM_BASE_URL=<provider> LLM_API_KEY=<key> COGNI_AGENT_MODEL=<strong-model> \
+  go test -tags eval ./bench/ -run EndToEnd -v -timeout 60m
+COGNI_EVAL=1 COGNI_RUNS_SUBDIR=stage3-swebench go test -tags eval ./bench/ -run Compact -v
+```
