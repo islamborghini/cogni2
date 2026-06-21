@@ -33,7 +33,7 @@ func TestReplay(t *testing.T) {
 	if os.Getenv("COGNI_EVAL") != "1" {
 		t.Skip("set COGNI_EVAL=1 to run the replay eval")
 	}
-	dir := filepath.Join("..", "bench", "runs", "stage3", "baseline")
+	dir := filepath.Join("..", "bench", "runs", runsSubdir(), "baseline")
 	trajs := loadBaselineTrajectories(dir)
 	if len(trajs) == 0 {
 		t.Skipf("no baseline trajectories in %s — run the end-to-end eval first", dir)
@@ -122,7 +122,7 @@ func TestReplay(t *testing.T) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Budget > rows[j].Budget })
 
-	set, err := Load("tasks.yaml")
+	set, err := Load(tasksPath())
 	if err != nil {
 		t.Fatalf("load tasks: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestReplay(t *testing.T) {
 	if err := os.MkdirAll("results", 0o755); err != nil {
 		t.Fatalf("mkdir results: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join("results", "stage3.md"), []byte(md), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join("results", runsSubdir()+".md"), []byte(md), 0o644); err != nil {
 		t.Fatalf("write stage3.md: %v", err)
 	}
 }

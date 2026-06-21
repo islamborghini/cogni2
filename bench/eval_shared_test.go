@@ -45,7 +45,7 @@ func setupEvalIndex(t *testing.T) *evalEnv {
 		t.Skip("set COGNI_BENCH_REPO to a checkout of the target repo")
 	}
 
-	set, err := Load("tasks.yaml")
+	set, err := Load(tasksPath())
 	if err != nil {
 		t.Fatalf("load tasks: %v", err)
 	}
@@ -119,3 +119,14 @@ func envOrDefault(key, def string) string {
 	}
 	return def
 }
+
+// tasksPath is the task file the gated evals load. Defaults to the frozen 20
+// (tasks.yaml); set COGNI_TASKS=tasks-swebench.yaml for the long-horizon set. The
+// frozen tasks.yaml is never modified — a new set is a new file.
+func tasksPath() string { return envOrDefault("COGNI_TASKS", "tasks.yaml") }
+
+// runsSubdir namespaces the trajectory cache and the result filename by task set, so
+// a SWE-bench run (COGNI_RUNS_SUBDIR=stage3-swebench) lands under
+// bench/runs/stage3-swebench/ and writes results/stage3-swebench.md instead of
+// clobbering the frozen-20 artifacts. Defaults to stage3 (unchanged behavior).
+func runsSubdir() string { return envOrDefault("COGNI_RUNS_SUBDIR", "stage3") }

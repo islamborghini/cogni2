@@ -119,7 +119,7 @@ func TestEndToEnd(t *testing.T) {
 		agentModel, compressModel, envOrDefault("LLM_BASE_URL", "groq"),
 		env.provider, env.model, retrievalK, assemblyBudget, budgets, repeats, maxTurns, tolerance)
 	md := RenderMarkdownStage3(env.set, res, run)
-	if err := os.WriteFile(filepath.Join("results", "stage3.md"), []byte(md), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join("results", runsSubdir()+".md"), []byte(md), 0o644); err != nil {
 		t.Fatalf("write stage3.md: %v", err)
 	}
 
@@ -174,7 +174,7 @@ type stage3Trajectory struct {
 // persists the trajectory, and returns the aggregation record.
 func runOrLoad(t *testing.T, ctx context.Context, p runParams) RunRecord {
 	t.Helper()
-	path := filepath.Join("..", "bench", "runs", "stage3", p.arm, fmt.Sprintf("%s__r%d.json", p.task.ID, p.repeat))
+	path := filepath.Join("..", "bench", "runs", runsSubdir(), p.arm, fmt.Sprintf("%s__r%d.json", p.task.ID, p.repeat))
 	if data, err := os.ReadFile(path); err == nil {
 		var tr stage3Trajectory
 		if json.Unmarshal(data, &tr) == nil {
