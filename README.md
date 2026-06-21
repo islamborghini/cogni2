@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="landing/logo.svg" alt="Cogni" width="120" />
+</p>
+
 # Cogni
 
 A token-efficient context layer for coding agents. Cogni cuts the tokens, and the cost, an agent spends per task without lowering how often it succeeds.
